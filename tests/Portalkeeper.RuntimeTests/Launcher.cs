@@ -283,21 +283,24 @@ internal static partial class Program
         Directory.CreateDirectory(Path.GetDirectoryName(good)!);
         File.WriteAllBytes(good, reforgedC);
         var downloads = 0;
-        var result = await RetiredPatchService.CleanupAsync(a, current, known, torrent,
-            (_, _, _) => { downloads++; return Task.CompletedTask; }, null, CancellationToken.None);
+        var stops = 0;
+        var result = await RetiredPatchService.CleanupAsync(a, "r1", current, known, torrent,
+            (_, _, _) => { downloads++; return Task.CompletedTask; },
+            () => { stops++; return Task.CompletedTask; }, null, CancellationToken.None);
+        check("sharing is stopped once before the first change", stops == 1);
         check("retired patch removed and original restored from a verified backup",
             result is { Removed: 2, Restored: 1, Pending: 0 } && downloads == 0
             && File.ReadAllBytes(Path.Combine(a, "Data", "patch-C.mpq")).AsSpan().SequenceEqual(reforgedC));
         check("a retired patch the client torrent doesn't have is just removed", !File.Exists(Path.Combine(a, "Data", "Patch-F.MPQ")));
         check("a backup failing the torrent's hashes is not restored", File.Exists(junk));
         check("a second run finds nothing to do",
-            await RetiredPatchService.CleanupAsync(a, current, known, torrent, null, null, CancellationToken.None) is { Removed: 0, Pending: 0 });
+            await RetiredPatchService.CleanupAsync(a, "r1", current, known, torrent, null, null, null, CancellationToken.None) is { Removed: 0, Pending: 0 });
 
         // 2. No backup: the file comes from the web seed, at the BEP 19 URL, and is verified.
         var b = NewClient("download");
         Uri? asked = null;
-        result = await RetiredPatchService.CleanupAsync(b, current, known, torrent,
-            (url, path, _) => { asked = url; File.WriteAllBytes(path, reforgedC); return Task.CompletedTask; }, null, CancellationToken.None);
+        result = await RetiredPatchService.CleanupAsync(b, "r1", current, known, torrent,
+            (url, path, _) => { asked = url; File.WriteAllBytes(path, reforgedC); return Task.CompletedTask; }, null, null, CancellationToken.None);
         check("without a backup the original is downloaded from the web seed",
             result is { Restored: 1, Pending: 0 } && File.ReadAllBytes(Path.Combine(b, "Data", "patch-C.mpq")).AsSpan().SequenceEqual(reforgedC));
         check("web seed URL is seed + torrent name + path",
@@ -305,8 +308,8 @@ internal static partial class Program
 
         // 3. A bad download leaves our patch where it is (a stale patch beats a hole) and retries later.
         var c = NewClient("bad");
-        result = await RetiredPatchService.CleanupAsync(c, current, known, torrent,
-            (_, path, _) => { File.WriteAllBytes(path, Bytes(5, reforgedC.Length)); return Task.CompletedTask; }, null, CancellationToken.None);
+        result = await RetiredPatchService.CleanupAsync(c, "r1", current, known, torrent,
+            (_, path, _) => { File.WriteAllBytes(path, Bytes(5, reforgedC.Length)); return Task.CompletedTask; }, null, null, CancellationToken.None);
         check("a download failing the torrent's hashes keeps our patch and reports it pending",
             result.Pending == 1 && File.ReadAllBytes(Path.Combine(c, "Data", "patch-C.MPQ")).AsSpan().SequenceEqual(ourC)
             && !Directory.EnumerateFiles(Path.Combine(c, ".portalkeeper", "downloads")).Any());
@@ -314,7 +317,7 @@ internal static partial class Program
         // 4. Files that aren't byte-for-byte ours, and patches realm.conf still lists, are left alone.
         var d = NewClient("foreign");
         File.WriteAllBytes(Path.Combine(d, "Data", "Patch-F.MPQ"), Bytes(6, ourF.Length));
-        result = await RetiredPatchService.CleanupAsync(d, new[] { "Data/patch-K.MPQ", "Data/patch-C.MPQ" }, known, torrent, null, null, CancellationToken.None);
+        result = await RetiredPatchService.CleanupAsync(d, "r1", new[] { "Data/patch-K.MPQ", "Data/patch-C.MPQ" }, known, torrent, null, null, null, CancellationToken.None);
         check("a same-size file that isn't ours stays", File.Exists(Path.Combine(d, "Data", "Patch-F.MPQ")));
         check("a patch realm.conf still lists stays", File.Exists(Path.Combine(d, "Data", "patch-C.MPQ")) && result.Removed == 0);
 
@@ -324,23 +327,29 @@ internal static partial class Program
         var mine = Path.Combine(e, "Data", "mine.bak");
         File.WriteAllBytes(mine, Bytes(7, 1234)); // a player's own file our patch-K replaced
         File.WriteAllBytes(k, ourK);
-        RetiredPatchService.RecordInstall(e, k, Hash(ourK), mine, known);
+        RetiredPatchService.RecordInstall(e, "r1", k, Hash(ourK), mine, known);
         var ourK2 = Bytes(13, 7_100);
         var k2Backup = Path.Combine(e, "Data", "k1.bak");
         File.WriteAllBytes(k2Backup, ourK);
         File.WriteAllBytes(k, ourK2);
-        RetiredPatchService.RecordInstall(e, k, Hash(ourK2), k2Backup, known);
+        RetiredPatchService.RecordInstall(e, "r1", k, Hash(ourK2), k2Backup, known);
         var ledger = RetiredPatchService.Load(e);
         check("ledger keeps the first install's original across updates",
             ledger.Count == 1 && ledger[0].Original == "Data/mine.bak" && ledger[0].Sha256 == Hash(ourK2));
         var backupOfKnown = Path.Combine(e, "Data", "c.bak");
         File.WriteAllBytes(backupOfKnown, ourC);
         File.WriteAllBytes(Path.Combine(e, "Data", "patch-W.MPQ"), ourK);
-        RetiredPatchService.RecordInstall(e, Path.Combine(e, "Data", "patch-W.MPQ"), Hash(ourK), backupOfKnown, known);
+        RetiredPatchService.RecordInstall(e, "r1", Path.Combine(e, "Data", "patch-W.MPQ"), Hash(ourK), backupOfKnown, known);
         check("an old realm patch is never recorded as the original",
             RetiredPatchService.Load(e).Single(x => x.Path == "Data/patch-W.MPQ").Original is null);
-        result = await RetiredPatchService.CleanupAsync(e, new[] { "Data/patch-W.MPQ" }, known, torrent,
-            (_, path, _) => { File.WriteAllBytes(path, reforgedC); return Task.CompletedTask; }, null, CancellationToken.None);
+        result = await RetiredPatchService.CleanupAsync(e, "r1", new[] { "Data/patch-W.MPQ" }, known, torrent,
+            (_, path, _) => { File.WriteAllBytes(path, reforgedC); return Task.CompletedTask; }, null, null, CancellationToken.None);
+        var other = NewClient("other-realm");
+        var ok = Path.Combine(other, "Data", "patch-K.MPQ");
+        File.WriteAllBytes(ok, ourK);
+        RetiredPatchService.RecordInstall(other, "r2", ok, Hash(ourK), null, known);
+        await RetiredPatchService.CleanupAsync(other, "r1", current, [], torrent, null, null, null, CancellationToken.None);
+        check("another realm's patches are never touched", File.Exists(ok) && RetiredPatchService.Load(other).Count == 1);
         check("a dropped ledger patch is removed and its original put back",
             File.ReadAllBytes(k).AsSpan().SequenceEqual(Bytes(7, 1234)) && !File.Exists(mine)
             && RetiredPatchService.Load(e).All(x => x.Path != "Data/patch-K.MPQ"));

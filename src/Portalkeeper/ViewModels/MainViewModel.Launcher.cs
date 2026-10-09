@@ -367,8 +367,9 @@ public sealed partial class MainViewModel
             var current = realm.Patches.Where(p => p.InstallMode == PatchInstallMode.File)
                 .Select(p => Path.Combine(p.InstallDirectory, p.FileName));
             var status = new Progress<string>(SetSyncStatus);
-            var result = await RetiredPatchService.CleanupAsync(EffectiveClientPath, current, RealmBranding.RetiredPatches,
-                torrent, DownloadClientFileAsync, status, CancellationToken.None);
+            var result = await RetiredPatchService.CleanupAsync(EffectiveClientPath, RealmIdentity.FromRealm(realm), current,
+                RealmBranding.IsBuiltIn(realm) ? RealmBranding.RetiredPatches : [],
+                torrent, DownloadClientFileAsync, StopAllSharingAsync, status, CancellationToken.None);
             if (result.Removed > 0) RefreshPatches();
             _syncStatus = result.Pending > 0
                 ? "Couldn't restore some client files the realm's old patches replaced; CHECK AGAIN retries."
@@ -383,6 +384,14 @@ public sealed partial class MainViewModel
         finally { _isCleaningPatches = false; }
     }
 
+    /// <summary>A file about to be replaced may be open in a torrent: stop sharing until the next refresh.</summary>
+    private async Task StopAllSharingAsync()
+    {
+        await _sharingLock.WaitAsync();
+        try { await _torrents.StopSharingExceptAsync(Array.Empty<string>()); }
+        finally { _sharingLock.Release(); }
+    }
+
     private static async Task DownloadClientFileAsync(Uri url, string path, CancellationToken cancellationToken)
     {
         using var response = await ClientFileHttp.GetAsync(url, System.Net.Http.HttpCompletionOption.ResponseHeadersRead, cancellationToken);
@@ -394,10 +403,10 @@ public sealed partial class MainViewModel
     /// <summary>Notes the realm patches installed now, so they can be taken out cleanly later.</summary>
     private void RecordInstalledPatches()
     {
-        if (!ClientValid || IsIsolatedRealm) return;
+        if (!ClientValid || IsIsolatedRealm || _realmInfo is not { } realm) return;
         try
         {
-            RetiredPatchService.RecordCurrent(EffectiveClientPath, Patches
+            RetiredPatchService.RecordCurrent(EffectiveClientPath, RealmIdentity.FromRealm(realm), Patches
                 .Where(p => p.IsValid && p.Definition.InstallMode == PatchInstallMode.File && p.Destination.Length > 0)
                 .Select(p => (p.Destination, p.Definition.Sha256)));
         }

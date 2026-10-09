@@ -105,7 +105,8 @@ public sealed class PatchService
                 }
             }
             if (allocations is null)
-                RetiredPatchService.RecordInstall(root, destination, patch.Sha256, replaced, RealmBranding.RetiredPatches);
+                RetiredPatchService.RecordInstall(root, realm is null ? "" : RealmIdentity.FromRealm(realm), destination,
+                    patch.Sha256, replaced, RealmBranding.IsBuiltIn(realm) ? RealmBranding.RetiredPatches : []);
             ClearClientCache(root);
         }
         finally { if (File.Exists(temp)) File.Delete(temp); }

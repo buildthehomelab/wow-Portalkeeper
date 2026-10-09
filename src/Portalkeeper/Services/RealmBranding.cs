@@ -46,6 +46,12 @@ public static class RealmBranding
     /// </summary>
     public const string CacheVersionUrl = RealmBaseUrl + "cache-version.txt";
 
+    /// <summary>The built-in realm's realm.conf URL (its ConfigURL), which identifies it among realms.</summary>
+    public const string ConfigUrl = RealmBaseUrl + RealmFileName;
+
+    public static bool IsBuiltIn(Portalkeeper.Models.RealmInfo? realm) =>
+        realm is not null && string.Equals(realm.ConfigUrl, ConfigUrl, StringComparison.OrdinalIgnoreCase);
+
     /// <summary>
     /// Patches the realm shipped before launchers kept a ledger of what they installed (0.5.6). Once
     /// realm.conf stops listing one, RetiredPatchService takes the file out of any client where it is
