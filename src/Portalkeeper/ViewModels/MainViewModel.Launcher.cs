@@ -27,6 +27,7 @@ public sealed partial class MainViewModel
     private string _loginError = "";
     private string _rememberedAccountName = "";
     private bool _isInstallingClient;
+    private bool _isRepairingClient;
     private CancellationTokenSource? _installCancel;
     private string _installStatus = "";
     private double _installPercent;
@@ -184,7 +185,8 @@ public sealed partial class MainViewModel
     // ---------------------------------------------------------
 
     public bool IsInstallingClient => _isInstallingClient;
-    public bool CanInstallClient => IsLoggedIn && !ClientValid && !_isInstallingClient && !IsLaunching && !IsGameRunning;
+    public bool CanInstallClient => IsLoggedIn && (!ClientValid || _clientCheck == ClientCheck.NotRealmClient)
+        && !_isInstallingClient && !IsLaunching && !IsGameRunning;
     public bool HasPendingClientInstall => !string.IsNullOrWhiteSpace(_savedSettings.PendingClientInstallPath)
         && Directory.Exists(_savedSettings.PendingClientInstallPath);
     public string InstallClientButtonText => HasPendingClientInstall ? "RESUME INSTALL" : "INSTALL WOW";
@@ -193,84 +195,139 @@ public sealed partial class MainViewModel
     public bool HasInstallStatus => _installStatus.Length > 0;
     public double InstallPercent => _installPercent;
 
-    private const string InstallMarker = ".portalkeeper/client-install.json";
+    private const string InstallMarker = ClientConformanceService.InstallMarkerRelativePath;
 
     /// <summary>
-    /// Downloads the realm's client into a new folder (named after the torrent) inside
-    /// <paramref name="parentDirectory"/>, or resumes the pending install when it's null.
+    /// Installs the realm's client from <paramref name="folder"/> the player picked, or resumes the
+    /// pending install when it's null. A folder that already holds a WoW client is used as the base:
+    /// it becomes the realm's client in place (see <see cref="DownloadClientAsync"/>). Any other folder
+    /// gets the client in a new folder inside it, named after the torrent.
     /// </summary>
-    public async Task InstallClientAsync(string? parentDirectory)
+    public async Task InstallClientAsync(string? folder)
     {
         var session = _session;
         if (!CanInstallClient || session is null) return;
+        await DownloadClientAsync(session, folder, repair: false);
+    }
+
+    /// <summary>
+    /// Downloads the realm's client into its target folder. Files already there are kept when they pass
+    /// the torrent's checksums, so only what differs is downloaded; files the realm doesn't ship (and
+    /// client files longer than the realm's) are deleted first. Addons, settings, Logs and Screenshots
+    /// are never touched; Cache is cleared when files change.
+    /// </summary>
+    private async Task DownloadClientAsync(LauncherSession session, string? folder, bool repair)
+    {
         _isInstallingClient = true;
+        _isRepairingClient = repair;
         _installCancel = new CancellationTokenSource();
         var cancel = _installCancel.Token;
-        SetInstallStatus("Getting the client download...", 0);
+        SetInstallStatus(repair ? "Checking World of Warcraft..." : "Getting the client download...", 0);
         try
         {
             _clientTorrent ??= await _accountService.GetClientTorrentAsync(session, cancel);
             var infoHash = TorrentService.InfoHashOf(_clientTorrent);
             string target;
-            if (parentDirectory is null && HasPendingClientInstall)
+            if (repair)
+                target = ClientPath;
+            else if (folder is null && HasPendingClientInstall)
                 target = _savedSettings.PendingClientInstallPath!;
-            else if (parentDirectory is not null)
-                target = Path.Combine(parentDirectory, TorrentService.NameOf(_clientTorrent));
+            else if (folder is not null)
+                target = ClientService.FindWowExecutable(folder) is not null || File.Exists(Path.Combine(folder, InstallMarker))
+                    ? folder
+                    : Path.Combine(folder, TorrentService.NameOf(_clientTorrent));
             else
                 throw new InvalidOperationException("Choose where to install World of Warcraft.");
 
-            // Never download into a folder that holds something else, such as another WoW install. A
-            // folder an earlier install started is fine, even for an older client torrent: the files
-            // already there are hash-checked and only what differs is downloaded.
+            // Never download into a folder that holds something other than WoW. A WoW client is the
+            // base for the realm's client; a folder an earlier install started is fine too, even for an
+            // older client torrent: the files already there are hash-checked and only what differs is
+            // downloaded.
             var marker = Path.Combine(target, InstallMarker);
-            if (Directory.Exists(target) && Directory.EnumerateFileSystemEntries(target).Any() && !File.Exists(marker))
-                throw new InvalidOperationException($"{target} already exists. Choose another location, or use LOCATE CLIENT if it's a WoW install.");
+            var isWowClient = ClientService.FindWowExecutable(target) is not null;
+            if (Directory.Exists(target) && Directory.EnumerateFileSystemEntries(target).Any() && !File.Exists(marker) && !isWowClient)
+                throw new InvalidOperationException($"{target} already exists and isn't a WoW client. Choose another location.");
             Directory.CreateDirectory(Path.GetDirectoryName(marker)!);
             await File.WriteAllTextAsync(marker, JsonSerializer.Serialize(new { infoHash, started = DateTimeOffset.UtcNow }), cancel);
             _savedSettings.PendingClientInstallPath = target;
             SaveSettings();
 
-            var progress = new Progress<TorrentProgress>(p => SetInstallStatus(DescribeDownload("Downloading World of Warcraft", p), p.Percent));
+            if (isWowClient || repair)
+            {
+                SetInstallStatus("Removing files the realm doesn't ship...", 0);
+                await StopAllSharingAsync();
+                var torrent = _clientTorrent;
+                var realmFiles = RealmPatchFiles(target);
+                await Task.Run(() => ClientConformanceService.DeleteNonConforming(target,
+                    ClientConformanceService.Check(target, torrent, realmFiles)), cancel);
+                SetInstallStatus("Checking your files against the realm's client (this takes a few minutes)...", 0);
+            }
+
+            var verb = repair ? "Updating World of Warcraft" : "Downloading World of Warcraft";
+            var progress = new Progress<TorrentProgress>(p => SetInstallStatus(DescribeDownload(verb, p), p.Percent));
             await _torrents.DownloadAsync(_clientTorrent, target, keepSharing: true, progress, cancel);
+            ClientConformanceService.SaveCachedTorrent(target, _clientTorrent);
 
             _savedSettings.PendingClientInstallPath = null;
-            var installed = "World of Warcraft is installed.";
+            var installed = repair ? "World of Warcraft is up to date." : "World of Warcraft is installed.";
             // The player's own addons and settings live in the client they used until now: bring
             // them along (copied, never overwriting) before the launcher switches to the new one.
             var previousClient = ClientPath;
-            var realmAddonFolders = _realmInfo?.Addons.Select(a => a.Folder).ToArray() ?? [];
-            SetInstallStatus("Copying your addons and settings from your old client...", 100);
-            try
+            if (!repair && ClientValid && !SameDirectory(previousClient, target))
             {
-                var imported = await Task.Run(() => ClientImportService.Import(previousClient, target, realmAddonFolders));
-                if (imported.Addons > 0 || imported.SettingsFiles > 0)
-                    installed += $" Copied {imported.Addons} addon(s) and your game settings from {previousClient}.";
-                if (imported.Failed > 0)
-                    installed += $" {imported.Failed} file(s) couldn't be copied; they're still in {previousClient}.";
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
-            {
-                installed += " Your addons couldn't be copied from your old client: " + ex.Message;
+                var realmAddonFolders = _realmInfo?.Addons.Select(a => a.Folder).ToArray() ?? [];
+                SetInstallStatus("Copying your addons and settings from your old client...", 100);
+                try
+                {
+                    var imported = await Task.Run(() => ClientImportService.Import(previousClient, target, realmAddonFolders));
+                    if (imported.Addons > 0 || imported.SettingsFiles > 0)
+                        installed += $" Copied {imported.Addons} addon(s) and your game settings from {previousClient}.";
+                    if (imported.Failed > 0)
+                        installed += $" {imported.Failed} file(s) couldn't be copied; they're still in {previousClient}.";
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+                {
+                    installed += " Your addons couldn't be copied from your old client: " + ex.Message;
+                }
             }
             _isInstallingClient = false; // lets the realm's required patches and addons install next
+            _isRepairingClient = false;
+            _clientCheck = ClientCheck.Unchecked;
             SetInstallStatus(installed, 100);
             SetClientDirectory(target);
             if (!ClientValid)
                 throw new InvalidDataException("The downloaded client didn't pass validation: " + ClientStatus);
             await RediscoverRealmConfigurationAsync(); // also installs the realm's required patches and addons
         }
-        catch (OperationCanceledException) { SetInstallStatus("Install paused. Click RESUME INSTALL to continue where it stopped.", _installPercent); }
+        catch (OperationCanceledException)
+        {
+            SetInstallStatus(repair ? "Update paused. TRY AGAIN continues where it stopped."
+                : "Install paused. Click RESUME INSTALL to continue where it stopped.", _installPercent);
+        }
         catch (LauncherApiException ex) when (ex.Status == HttpStatusCode.NotFound) { SetInstallStatus("The realm doesn't offer a client download yet.", 0); }
-        catch (Exception ex) { SetInstallStatus(UserErrorService.Format(ex, "Install stopped"), _installPercent); }
+        catch (Exception ex) { SetInstallStatus(UserErrorService.Format(ex, repair ? "Update stopped" : "Install stopped"), _installPercent); }
         finally
         {
             _isInstallingClient = false;
+            _isRepairingClient = false;
             _installCancel?.Dispose();
             _installCancel = null;
             try { SaveSettings(); } catch (Exception) { }
+            // An update that stopped leaves the client as it was: say why on the card.
+            if (repair && _clientCheck == ClientCheck.NeedsUpdate) SetClientCheck(ClientCheck.NeedsUpdate, _installStatus);
             NotifyInstallChanged();
             _ = RefreshSharingAsync();
         }
+    }
+
+    private static bool SameDirectory(string a, string b)
+    {
+        try
+        {
+            return string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)), Path.TrimEndingDirectorySeparator(Path.GetFullPath(b)),
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
     }
 
     public void CancelClientInstall() => _installCancel?.Cancel();
@@ -310,7 +367,7 @@ public sealed partial class MainViewModel
     private static bool InstallsAutomatically(PatchInfo patch) =>
         patch.Definition.Requirement is ComponentRequirement.Required or ComponentRequirement.Recommended;
 
-    private bool NeedsRequiredSync => IsLoggedIn && ClientValid && RealmConfigured && !IsIsolatedRealm && AddonsLoaded
+    private bool NeedsRequiredSync => IsLoggedIn && ClientValid && _clientCheck == ClientCheck.Ok && RealmConfigured && !IsIsolatedRealm && AddonsLoaded
         && (Patches.Any(p => InstallsAutomatically(p) && !p.IsValid) || !AddonsReady);
 
     /// <summary>
@@ -372,9 +429,103 @@ public sealed partial class MainViewModel
     {
         await ClearCacheIfRealmAsksAsync();
         await CleanupRetiredPatchesAsync();
+        await EnforceRealmClientAsync();
         await SyncRequiredAsync();
         RecordInstalledPatches();
         await RefreshSharingAsync();
+    }
+
+    // ---------------------------------------------------------
+    // Keeping the client exactly what the realm ships
+    // ---------------------------------------------------------
+
+    private enum ClientCheck { Unchecked, Ok, NeedsUpdate, NotRealmClient }
+    private ClientCheck _clientCheck = ClientCheck.Unchecked;
+    private string _clientCheckStatus = "";
+    private readonly SemaphoreSlim _clientCheckLock = new(1, 1);
+    private DateTimeOffset _lastAutoUpdate = DateTimeOffset.MinValue;
+    private static readonly TimeSpan AutoUpdateInterval = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// Holds the client to exactly what the realm ships (ClientConformanceService): files the realm
+    /// doesn't ship are deleted, and when client files are missing or changed, a client the launcher
+    /// installed (or made from another client) is updated in place by itself. Any other client goes
+    /// through INSTALL WOW first, which uses it as the base. Only for the built-in realm. When the portal
+    /// can't be reached the last client torrent seen is used; without any, the client isn't held back.
+    /// Returns true when the client may be played.
+    /// </summary>
+    private async Task<bool> EnforceRealmClientAsync()
+    {
+        var session = _session;
+        var realm = _realmInfo;
+        if (session is null || realm is null || !ClientValid || !RealmBranding.IsBuiltIn(realm) || IsIsolatedRealm)
+            return SetClientCheck(ClientCheck.Ok);
+        if (_isInstallingClient || IsGameRunning) return _clientCheck == ClientCheck.Ok;
+        await _clientCheckLock.WaitAsync();
+        try
+        {
+            var root = ClientPath;
+            byte[]? torrent;
+            try { torrent = _clientTorrent ??= await _accountService.GetClientTorrentAsync(session); }
+            catch (LauncherApiException ex) when (ex.Status == HttpStatusCode.NotFound) { torrent = null; }
+            catch (Exception) { torrent = ClientConformanceService.LoadCachedTorrent(root); }
+            if (torrent is null) return SetClientCheck(ClientCheck.Ok);
+
+            var realmFiles = RealmPatchFiles(root);
+            var result = await Task.Run(() => ClientConformanceService.Check(root, torrent, realmFiles));
+            var ours = ClientConformanceService.IsRealmInstall(root);
+            if (!result.HasAllClientFiles && !ours)
+                return SetClientCheck(ClientCheck.NotRealmClient);
+            if (result.Extra.Count > 0)
+            {
+                var deleted = await Task.Run(() => ClientConformanceService.DeleteNonConforming(root,
+                    result with { TooLong = [] }));
+                if (deleted > 0) RefreshPatches();
+            }
+            if (result.HasAllClientFiles)
+            {
+                ClientConformanceService.SaveCachedTorrent(root, torrent);
+                return SetClientCheck(ClientCheck.Ok);
+            }
+
+            if (DateTimeOffset.UtcNow - _lastAutoUpdate >= AutoUpdateInterval)
+            {
+                _lastAutoUpdate = DateTimeOffset.UtcNow;
+                _ = DownloadClientAsync(session, null, repair: true);
+                return SetClientCheck(ClientCheck.NeedsUpdate, "Updating World of Warcraft...");
+            }
+            return SetClientCheck(ClientCheck.NeedsUpdate,
+                $"{result.Different.Count} World of Warcraft file(s) don't match the realm's client; CHECK AGAIN retries the update.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            return SetClientCheck(ClientCheck.NeedsUpdate, UserErrorService.Format(ex, "Couldn't check World of Warcraft's files"));
+        }
+        finally { _clientCheckLock.Release(); }
+    }
+
+    /// <summary>TRY AGAIN: an update that didn't fix the client may run again straight away.</summary>
+    public void AllowClientUpdateRetry() => _lastAutoUpdate = DateTimeOffset.MinValue;
+
+    private bool SetClientCheck(ClientCheck state, string status = "")
+    {
+        _clientCheck = state;
+        _clientCheckStatus = status;
+        NotifyInstallChanged();
+        UpdateLaunchReadinessStatus();
+        return state == ClientCheck.Ok;
+    }
+
+    /// <summary>Where the realm's patches go in <paramref name="root"/>: they belong in the client too, installed or not.</summary>
+    private List<string> RealmPatchFiles(string root)
+    {
+        var files = new List<string>();
+        if (_realmInfo is not { } realm) return files;
+        files.AddRange(realm.Patches.Where(p => p.InstallMode == PatchInstallMode.File)
+            .Select(p => Path.Combine(root, p.InstallDirectory, p.FileName)));
+        if (SameDirectory(root, EffectiveClientPath))
+            files.AddRange(Patches.Where(p => p.Destination.Length > 0).Select(p => p.Destination));
+        return files;
     }
 
     // ---------------------------------------------------------
