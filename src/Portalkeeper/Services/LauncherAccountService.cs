@@ -30,13 +30,17 @@ public sealed class LauncherApiException(HttpStatusCode status, string message) 
 public sealed class LauncherAccountService
 {
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
+    // The first request for a new patch version makes the portal hash the whole file (2 GB for an HD patch).
+    private static readonly HttpClient TorrentHttp = new() { Timeout = TimeSpan.FromMinutes(5) };
     private readonly HttpClient _http;
+    private readonly HttpClient _torrentHttp;
     private readonly Uri _api;
 
     public LauncherAccountService(Uri? api = null, HttpClient? http = null)
     {
         _api = api ?? RealmBranding.LauncherApi;
         _http = http ?? Http;
+        _torrentHttp = http ?? TorrentHttp;
     }
 
     public async Task<LauncherSession> LoginAsync(string accountName, string password, CancellationToken cancellationToken = default)
@@ -99,7 +103,7 @@ public sealed class LauncherAccountService
     private async Task<byte[]> GetBytesAsync(string relative, LauncherSession session, CancellationToken cancellationToken)
     {
         using var request = Authorized(HttpMethod.Get, relative, session.Token);
-        using var response = await _http.SendAsync(request, cancellationToken);
+        using var response = await _torrentHttp.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
             throw await ErrorAsync(response, cancellationToken);
         return await response.Content.ReadAsByteArrayAsync(cancellationToken);

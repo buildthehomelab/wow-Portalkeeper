@@ -165,6 +165,7 @@ public sealed partial class MainViewModel
     public bool HasPendingClientInstall => !string.IsNullOrWhiteSpace(_savedSettings.PendingClientInstallPath)
         && Directory.Exists(_savedSettings.PendingClientInstallPath);
     public string InstallClientButtonText => HasPendingClientInstall ? "RESUME INSTALL" : "INSTALL WOW";
+    public bool CanInstallElsewhere => CanInstallClient && HasPendingClientInstall;
     public string InstallStatus => _installStatus;
     public bool HasInstallStatus => _installStatus.Length > 0;
     public double InstallPercent => _installPercent;
@@ -177,14 +178,15 @@ public sealed partial class MainViewModel
     /// </summary>
     public async Task InstallClientAsync(string? parentDirectory)
     {
-        if (!CanInstallClient || _session is null) return;
+        var session = _session;
+        if (!CanInstallClient || session is null) return;
         _isInstallingClient = true;
         _installCancel = new CancellationTokenSource();
         var cancel = _installCancel.Token;
         SetInstallStatus("Getting the client download...", 0);
         try
         {
-            _clientTorrent ??= await _accountService.GetClientTorrentAsync(_session, cancel);
+            _clientTorrent ??= await _accountService.GetClientTorrentAsync(session, cancel);
             var infoHash = TorrentService.InfoHashOf(_clientTorrent);
             string target;
             if (parentDirectory is null && HasPendingClientInstall)
@@ -194,10 +196,11 @@ public sealed partial class MainViewModel
             else
                 throw new InvalidOperationException("Choose where to install World of Warcraft.");
 
-            // Never download into a folder that holds something else, such as another WoW install.
+            // Never download into a folder that holds something else, such as another WoW install. A
+            // folder an earlier install started is fine, even for an older client torrent: the files
+            // already there are hash-checked and only what differs is downloaded.
             var marker = Path.Combine(target, InstallMarker);
-            if (Directory.Exists(target) && Directory.EnumerateFileSystemEntries(target).Any()
-                && !(File.Exists(marker) && File.ReadAllText(marker).Contains(infoHash, StringComparison.OrdinalIgnoreCase)))
+            if (Directory.Exists(target) && Directory.EnumerateFileSystemEntries(target).Any() && !File.Exists(marker))
                 throw new InvalidOperationException($"{target} already exists. Choose another location, or use LOCATE CLIENT if it's a WoW install.");
             Directory.CreateDirectory(Path.GetDirectoryName(marker)!);
             await File.WriteAllTextAsync(marker, JsonSerializer.Serialize(new { infoHash, started = DateTimeOffset.UtcNow }), cancel);
@@ -244,6 +247,7 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(CanInstallClient));
         OnPropertyChanged(nameof(HasPendingClientInstall));
         OnPropertyChanged(nameof(InstallClientButtonText));
+        OnPropertyChanged(nameof(CanInstallElsewhere));
         OnPropertyChanged(nameof(InstallStatus));
         OnPropertyChanged(nameof(HasInstallStatus));
         OnPropertyChanged(nameof(InstallPercent));
@@ -269,6 +273,12 @@ public sealed partial class MainViewModel
     /// </summary>
     private async Task SyncRequiredAsync()
     {
+        if (!_isInstallingRequired && !NeedsRequiredSync && _syncStatus.Length > 0)
+        {
+            // Nothing left to install (another client, or it got fixed): drop the old error.
+            _syncStatus = "";
+            UpdateLaunchReadinessStatus();
+        }
         if (_isInstallingRequired || !NeedsRequiredSync || _isInstallingClient || _isManagingComponents
             || _isRefreshingConfiguration || IsLaunching || IsGameRunning)
             return;
@@ -348,12 +358,12 @@ public sealed partial class MainViewModel
     // Patches over BitTorrent
     // ---------------------------------------------------------
 
-    private async Task<byte[]> PatchTorrentAsync(string fileName, string sha256)
+    private async Task<byte[]> PatchTorrentAsync(LauncherSession session, string fileName, string sha256)
     {
         // One torrent per patch version: a new SHA-256 in realm.conf means a new file on the server.
         var key = fileName + "|" + sha256;
         if (_patchTorrents.TryGetValue(key, out var cached)) return cached;
-        var bytes = await _accountService.GetPatchTorrentAsync(_session!, fileName);
+        var bytes = await _accountService.GetPatchTorrentAsync(session, fileName);
         _patchTorrents[key] = bytes;
         return bytes;
     }
@@ -363,11 +373,13 @@ public sealed partial class MainViewModel
     private async Task<bool> DownloadPatchViaTorrentAsync(PatchDefinition patch, string tempPath)
     {
         var fileName = RealmBranding.HostedPatchFileName(patch.SourceUrl);
-        if (_session is null || fileName is null) return false;
+        var session = _session;
+        if (session is null || fileName is null) return false;
+        var staging = Path.Combine(EffectiveClientPath, ".portalkeeper", "downloads");
+        byte[]? bytes = null;
         try
         {
-            var bytes = await PatchTorrentAsync(fileName, patch.Sha256);
-            var staging = Path.Combine(EffectiveClientPath, ".portalkeeper", "downloads");
+            bytes = await PatchTorrentAsync(session, fileName, patch.Sha256);
             // Give up on the torrent (and let PatchService use plain HTTP) after a minute without progress.
             using var stalled = new CancellationTokenSource(PatchStallTimeout);
             long lastDone = -1;
@@ -386,7 +398,12 @@ public sealed partial class MainViewModel
         }
         catch (Exception)
         {
-            return false; // PatchService falls back to the plain HTTP download.
+            // PatchService falls back to the plain HTTP download; don't leave a partial copy behind.
+            if (bytes is not null)
+            {
+                try { await _torrents.DiscardAsync(bytes, staging); } catch (Exception) { }
+            }
+            return false;
         }
     }
 
@@ -449,7 +466,8 @@ public sealed partial class MainViewModel
     /// </summary>
     public async Task RefreshSharingAsync()
     {
-        if (_session is null || IsGameRunning || _isInstallingClient) return;
+        var session = _session;
+        if (session is null || IsGameRunning || _isInstallingClient) return;
         await _sharingLock.WaitAsync();
         try
         {
@@ -458,7 +476,7 @@ public sealed partial class MainViewModel
             {
                 try
                 {
-                    _clientTorrent ??= await _accountService.GetClientTorrentAsync(_session);
+                    _clientTorrent ??= await _accountService.GetClientTorrentAsync(session);
                     if (await _torrents.ShareAsync(_clientTorrent, ClientPath))
                         keep.Add(TorrentService.InfoHashOf(_clientTorrent));
                 }
@@ -472,7 +490,7 @@ public sealed partial class MainViewModel
                         continue;
                     try
                     {
-                        var bytes = await PatchTorrentAsync(fileName, patch.Definition.Sha256);
+                        var bytes = await PatchTorrentAsync(session, fileName, patch.Definition.Sha256);
                         if (await _torrents.ShareAsync(bytes, Path.GetDirectoryName(patch.Destination)!))
                             keep.Add(TorrentService.InfoHashOf(bytes));
                     }

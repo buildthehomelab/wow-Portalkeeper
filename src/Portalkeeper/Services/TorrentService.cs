@@ -33,6 +33,8 @@ public sealed class TorrentService
     private ClientEngine? _engine;
     private int _port;
     private int _uploadLimit;
+    private bool _gameRunning;
+    private SharingSummary _lastSummary = new(0, 0, 0);
 
     public TorrentService(string? cacheDirectory = null)
     {
@@ -41,6 +43,8 @@ public sealed class TorrentService
     }
 
     public bool SharingEnabled { get; private set; }
+
+    private const int GameDiskReadLimit = 2 * 1024 * 1024;
 
     /// <summary>Applies the sharing settings. Turning sharing off stops every torrent that's only sharing.</summary>
     public async Task ConfigureAsync(bool share, int uploadBytesPerSecond, int port)
@@ -203,13 +207,19 @@ public sealed class TorrentService
         return name;
     }
 
-    /// <summary>Pauses every transfer (while the game runs, so sharing never costs the player latency).</summary>
+    /// <summary>
+    /// Pauses every transfer while the game runs, so sharing never costs the player latency, and
+    /// throttles disk reads so a hash check that's already running doesn't make the game stutter.
+    /// (A hash check isn't paused: resuming it would start the torrent.)
+    /// </summary>
     public async Task PauseAllAsync()
     {
         await _lock.WaitAsync();
         try
         {
+            _gameRunning = true;
             if (_engine is null) return;
+            await _engine.UpdateSettingsAsync(BuildSettings());
             foreach (var manager in _engine.Torrents.Where(m => m.State is TorrentState.Seeding or TorrentState.Downloading).ToArray())
                 await manager.PauseAsync();
         }
@@ -221,7 +231,9 @@ public sealed class TorrentService
         await _lock.WaitAsync();
         try
         {
+            _gameRunning = false;
             if (_engine is null) return;
+            await _engine.UpdateSettingsAsync(BuildSettings());
             foreach (var manager in _engine.Torrents.Where(m => m.State == TorrentState.Paused).ToArray())
                 await manager.StartAsync();
         }
@@ -231,10 +243,40 @@ public sealed class TorrentService
     public SharingSummary Summary()
     {
         var engine = _engine;
-        if (engine is null) return new SharingSummary(0, 0, 0);
-        var sharing = engine.Torrents.Where(m => m.Complete
-            && m.State is TorrentState.Seeding or TorrentState.Starting or TorrentState.Downloading).ToArray();
-        return new SharingSummary(sharing.Length, sharing.Sum(m => m.Monitor.UploadRate), sharing.Sum(m => m.OpenConnections));
+        if (engine is null) return _lastSummary = new SharingSummary(0, 0, 0);
+        try
+        {
+            // The list changes on MonoTorrent's own thread; copy it before looking at it.
+            var sharing = engine.Torrents.ToArray().Where(m => m.Complete
+                && m.State is TorrentState.Seeding or TorrentState.Starting or TorrentState.Downloading).ToArray();
+            return _lastSummary = new SharingSummary(sharing.Length, sharing.Sum(m => m.Monitor.UploadRate), sharing.Sum(m => m.OpenConnections));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
+        {
+            return _lastSummary; // changed while copying; the next tick catches up
+        }
+    }
+
+    /// <summary>
+    /// Forgets a download that won't be finished (a patch that fell back to HTTP): stops it and deletes
+    /// its partial files and resume data, but only when it was downloading into <paramref name="saveDirectory"/>.
+    /// </summary>
+    public async Task DiscardAsync(byte[] torrentBytes, string saveDirectory)
+    {
+        var torrent = Torrent.Load(torrentBytes);
+        await _lock.WaitAsync();
+        try
+        {
+            var manager = _engine?.Torrents.FirstOrDefault(m => m.InfoHashes == torrent.InfoHashes);
+            if (manager is null || !string.Equals(Path.GetFullPath(manager.SavePath), Path.GetFullPath(saveDirectory), StringComparison.Ordinal))
+                return;
+            if (manager.State != TorrentState.Stopped)
+                await manager.StopAsync(TimeSpan.FromSeconds(3));
+            await _engine!.RemoveAsync(manager, RemoveMode.CacheDataAndDownloadedData);
+            foreach (var path in new[] { ResumePath(manager), StampPath(manager) })
+                if (File.Exists(path)) File.Delete(path);
+        }
+        finally { _lock.Release(); }
     }
 
     /// <summary>Stops everything and saves resume data. Called when Portalkeeper closes.</summary>
@@ -266,6 +308,7 @@ public sealed class TorrentService
             AutoSaveLoadMagnetLinkMetadata = false,
             UsePartialFiles = false,
             MaximumUploadRate = _uploadLimit,
+            MaximumDiskReadRate = _gameRunning ? GameDiskReadLimit : 0,
             // Prefer other players; fall back to the realm's web seed when they're slow or absent.
             WebSeedDelay = TimeSpan.FromSeconds(5),
             WebSeedSpeedTrigger = 2 * 1024 * 1024,

@@ -226,6 +226,11 @@
                                         IsVisible="{Binding CanInstallClient}"
                                         ToolTip.Tip="Download World of Warcraft 3.3.5a for this realm"
                                         Padding="18,9" />
+                                <Button Content="INSTALL ELSEWHERE"
+                                        Click="InstallElsewhere_Click"
+                                        IsVisible="{Binding CanInstallElsewhere}"
+                                        ToolTip.Tip="Start the download in a different folder instead"
+                                        Padding="18,9" />
                                 <Button Content="PAUSE"
                                         Click="CancelInstall_Click"
                                         IsVisible="{Binding IsInstallingClient}"

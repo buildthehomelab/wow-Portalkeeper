@@ -762,7 +762,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             UpdateLaunchReadinessStatus();
             NotifyInstallChanged();
         }
-        await SyncRequiredAndShareAsync();
+        // In the background: callers (CHECK AGAIN, realm choice) shouldn't wait for patch downloads.
+        _ = SyncRequiredAndShareAsync();
     }
 
     private async Task LoadRealmConfigurationAsync(string? selectedPath = null)

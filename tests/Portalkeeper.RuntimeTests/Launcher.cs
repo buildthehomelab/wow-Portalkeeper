@@ -100,6 +100,23 @@ internal static partial class Program
             Check("restart shares from resume data", await restarted.ShareAsync(torrent, client));
             await restarted.ShutdownAsync();
 
+            // Discarding a download only ever deletes files in the folder it was downloading into.
+            var copy = Path.Combine(root, "copy", "WoW");
+            Directory.CreateDirectory(Path.Combine(copy, "Data"));
+            File.Copy(Path.Combine(client, "Wow.exe"), Path.Combine(copy, "Wow.exe"));
+            File.Copy(Path.Combine(client, "Data", "common.MPQ"), Path.Combine(copy, "Data", "common.MPQ"));
+            var discard = new TorrentService(Path.Combine(root, "torrent-cache-discard"));
+            await discard.ConfigureAsync(true, 0, 47392);
+            Check("copy shared before discard", await discard.ShareAsync(torrent, copy));
+            await discard.DiscardAsync(torrent, Path.Combine(root, "somewhere-else"));
+            Check("discard with another folder keeps the files", File.Exists(Path.Combine(copy, "Data", "common.MPQ")) && discard.Summary().Shared == 1);
+            await discard.DiscardAsync(torrent, copy);
+            Check("discard removes the torrent and its files", !File.Exists(Path.Combine(copy, "Data", "common.MPQ")) && discard.Summary().Shared == 0);
+            await discard.PauseAllAsync();
+            await discard.ResumeAllAsync();
+            Check("pause/resume with nothing running is harmless", discard.Summary().Shared == 0);
+            await discard.ShutdownAsync();
+
             // Same size and timestamp but different bytes can't be caught by the stamp check, so a
             // changed timestamp is what forces the re-hash: prove a re-hash then refuses the copy.
             var mpq = Path.Combine(client, "Data", "common.MPQ");

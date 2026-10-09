@@ -218,6 +218,17 @@ public partial class MainWindow : Window
             return;
         }
 
+        await PickInstallFolderAsync(viewModel);
+    }
+
+    private async void InstallElsewhere_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel viewModel)
+            await PickInstallFolderAsync(viewModel);
+    }
+
+    private async System.Threading.Tasks.Task PickInstallFolderAsync(MainViewModel viewModel)
+    {
         var folders = await StorageProvider.OpenFolderPickerAsync(
             new FolderPickerOpenOptions
             {
