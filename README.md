@@ -11,6 +11,8 @@
 >
 > - One clean launcher screen: realm status, a single status card (log in, install, downloading, up to date), settings and a big ENTER REALM button.
 >
+> - Patch changes clear the client's `Cache` folder. For server changes the client also caches (items, spells, quests), change the text in the realm folder's `cache-version.txt` (for example `date +%s > realm-public/cache-version.txt`) and every launcher clears Cache once before its next launch.
+>
 > The launcher's title font is [Cinzel](https://github.com/NDISCOVER/Cinzel) by Natanael Gama, under the SIL Open Font License 1.1 (`src/Portalkeeper/Assets/Fonts/Cinzel-OFL.txt`).
 >
 > The server side is the portal's launcher API ([wow-mod-azerothcore-portal](https://github.com/buildthehomelab/wow-mod-azerothcore-portal), `api/launcher/`). For development, `PORTALKEEPER_LAUNCHER_API` points a build at a test portal. `dotnet run --project tests/Portalkeeper.RuntimeTests -- launcher` runs the fork's offline checks.

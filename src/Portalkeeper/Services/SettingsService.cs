@@ -43,6 +43,7 @@ public sealed class SettingsService
 
             var settings = JsonSerializer.Deserialize<PortalkeeperSettings>(json) ?? new PortalkeeperSettings();
             settings.ShowTransmogrifiedAppearancesByRealm ??= new();
+            settings.ClientCacheVersions ??= new();
             return settings;
         }
         catch
@@ -82,6 +83,8 @@ public sealed class PortalkeeperSettings
     public string? PendingClientInstallPath { get; set; }
     // Installed Windows builds download and run new releases by themselves.
     public bool AutoUpdatePortalkeeper { get; set; } = true;
+    // The realm's cache-version.txt each client folder last cleared its Cache for.
+    public Dictionary<string, string> ClientCacheVersions { get; set; } = new();
     // The last self-update started: if Portalkeeper comes back still on the old version, the install
     // failed, so automatic retries of that version wait a while (UPDATE NOW always tries).
     public string? LastSelfUpdateVersion { get; set; }

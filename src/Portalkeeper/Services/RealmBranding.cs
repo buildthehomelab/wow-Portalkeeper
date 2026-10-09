@@ -36,6 +36,13 @@ public static class RealmBranding
     public const string PatchBaseUrl = "https://wow.vaultrona.com/realm/";
 
     /// <summary>
+    /// Any short text (a date, a counter). When it changes, every launcher clears its client's Cache
+    /// folder before the next launch: the server bumps it after changes the client caches, such as
+    /// items, spells or quests. Missing file: nothing happens.
+    /// </summary>
+    public const string CacheVersionUrl = PatchBaseUrl + "cache-version.txt";
+
+    /// <summary>
     /// Writes the embedded realm.conf into the store when the store holds no realm yet. Returns true
     /// when it wrote the file. A realm the player already has (including a newer refreshed copy of this
     /// one) is never touched.

@@ -579,6 +579,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         try
         {
             ApplyClientInfo(_clientService.ValidateClient(ClientPath, _realmInfo.Client));
+            await ClearCacheIfRealmAsksAsync();
             await PrepareIsolatedRuntimeAsync();
             var effectiveClient = _clientService.ValidateClient(EffectiveClientPath, _realmInfo.Client);
             if (!effectiveClient.IsSupportedClient) throw new InvalidOperationException(effectiveClient.StatusMessage);

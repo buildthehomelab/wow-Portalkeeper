@@ -17,6 +17,8 @@ This fork is built for one realm and changes three upstream rules on purpose:
 
 * **The main window is a single launcher scene** (`MainWindow.axaml`, `MainViewModel.Home.cs`): borderless window with its own top bar, logo, realm status, one status card, settings gear and ENTER REALM. Client, addon, sharing and account details live in Settings. A branded `Assets/Branding/background.jpg` (or `.png`) replaces the gradient background when present.
 
+* **The client's `Cache` folder is cleared** when a patch is installed, updated or removed (`PatchService.ClearClientCache`), and once per client whenever the realm's `realm/cache-version.txt` changes (`ClearCacheIfRealmAsksAsync`, after refreshes and before launch).
+
 Keep these changes out of upstream pull requests.
 
 ## Project Purpose
