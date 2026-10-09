@@ -255,6 +255,7 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(IsSyncingRequired));
         OnPropertyChanged(nameof(CanEnterRealm));
         OnPropertyChanged(nameof(EnterRealmButtonText));
+        NotifyHome();
     }
 
     // ---------------------------------------------------------
@@ -525,6 +526,7 @@ public sealed partial class MainViewModel
             {
                 _sharingStatus = status;
                 OnPropertyChanged(nameof(SharingStatus));
+                OnPropertyChanged(nameof(FooterText));
             }
         }
     }

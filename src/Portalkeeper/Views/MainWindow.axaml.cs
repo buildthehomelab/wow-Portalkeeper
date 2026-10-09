@@ -13,6 +13,51 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        LoadBackground();
+    }
+
+    // A branded background image, when the build ships one; otherwise the gradient scene stays.
+    private void LoadBackground()
+    {
+        foreach (var name in new[] { "background.jpg", "background.png" })
+        {
+            var uri = new System.Uri("avares://Portalkeeper/Assets/Branding/" + name);
+            if (!Avalonia.Platform.AssetLoader.Exists(uri)) continue;
+            using var stream = Avalonia.Platform.AssetLoader.Open(uri);
+            BackgroundImage.Source = new Avalonia.Media.Imaging.Bitmap(stream);
+            BackgroundImage.IsVisible = true;
+            return;
+        }
+    }
+
+    private void TitleBar_PointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        // Drag the window by its top bar (the buttons on it handle their own clicks).
+        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed && e.Source is not Button)
+            BeginMoveDrag(e);
+    }
+
+    private void Minimize_Click(object? sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+
+    private void Close_Click(object? sender, RoutedEventArgs e) => Close();
+
+    private void Website_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel vm)
+            OpenUrl(string.IsNullOrWhiteSpace(vm.RealmWebsite) ? vm.AccountSignupUrl : vm.RealmWebsite);
+    }
+
+    private void PatchNotes_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel vm)
+            OpenUrl(vm.PatchNotesUrl);
+    }
+
+    private static void OpenUrl(string url)
+    {
+        if (!System.Uri.TryCreate(url, System.UriKind.Absolute, out var uri) || (uri.Scheme != "https" && uri.Scheme != "http")) return;
+        try { Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true }); }
+        catch (System.Exception) { /* No browser available. */ }
     }
 
     private async void LocateClient_Click(
