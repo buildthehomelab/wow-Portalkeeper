@@ -15,7 +15,13 @@ namespace Portalkeeper.Services;
 /// <param name="WebSeeds">The realm's web seeds connected (its server sending the files over HTTP).</param>
 public sealed record TorrentProgress(double Percent, long DoneBytes, long TotalBytes, long DownloadRate, long UploadRate, int Peers, int WebSeeds = 0);
 
-public sealed record SharingSummary(int Shared, long UploadRate, int Peers);
+/// <param name="Shared">Torrents being shared: the client counts as one, however many files it has.</param>
+/// <param name="ClientShared">One of them is the client torrent asked about.</param>
+/// <param name="Peers">Players connected, each counted once however many torrents they get from us.</param>
+public sealed record SharingSummary(int Shared, long UploadRate, int Peers, bool ClientShared = false)
+{
+    public int PatchesShared => Shared - (ClientShared ? 1 : 0);
+}
 
 /// <summary>
 /// BitTorrent for the realm's client and patches (MonoTorrent). Downloads come from other players
@@ -242,7 +248,7 @@ public sealed class TorrentService
         finally { _lock.Release(); }
     }
 
-    public SharingSummary Summary()
+    public async Task<SharingSummary> SummaryAsync(string? clientInfoHash = null)
     {
         var engine = _engine;
         if (engine is null) return _lastSummary = new SharingSummary(0, 0, 0);
@@ -251,7 +257,12 @@ public sealed class TorrentService
             // The list changes on MonoTorrent's own thread; copy it before looking at it.
             var sharing = engine.Torrents.ToArray().Where(m => m.Complete
                 && m.State is TorrentState.Seeding or TorrentState.Starting or TorrentState.Downloading).ToArray();
-            return _lastSummary = new SharingSummary(sharing.Length, sharing.Sum(m => m.Monitor.UploadRate), sharing.Sum(m => m.OpenConnections));
+            var players = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var manager in sharing)
+                foreach (var peer in await manager.GetPeersAsync())
+                    if (peer.Uri.Scheme is not ("http" or "https")) players.Add(peer.Uri.Host);
+            var client = clientInfoHash is not null && sharing.Any(m => Key(m.InfoHashes) == clientInfoHash);
+            return _lastSummary = new SharingSummary(sharing.Length, sharing.Sum(m => m.Monitor.UploadRate), players.Count, client);
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
         {

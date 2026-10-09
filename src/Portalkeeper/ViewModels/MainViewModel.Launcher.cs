@@ -822,12 +822,13 @@ public sealed partial class MainViewModel
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
         while (await timer.WaitForNextTickAsync())
         {
-            var summary = _torrents.Summary();
+            var clientTorrent = _clientTorrent;
+            var summary = await _torrents.SummaryAsync(clientTorrent is null ? null : TorrentService.InfoHashOf(clientTorrent));
             var status = !IsLoggedIn ? ""
                 : !_savedSettings.ShareDownloads ? "Sharing with other players is off."
                 : IsGameRunning ? "Sharing paused while you play."
                 : summary.Shared == 0 ? ""
-                : $"Sharing {summary.Shared} download{(summary.Shared == 1 ? "" : "s")} with {summary.Peers} player{(summary.Peers == 1 ? "" : "s")} · ↑ {FormatRate(summary.UploadRate)}";
+                : $"Sharing {DescribeShared(summary)} with {summary.Peers} player{(summary.Peers == 1 ? "" : "s")} · ↑ {FormatRate(summary.UploadRate)}";
             if (status != _sharingStatus)
             {
                 _sharingStatus = status;
@@ -865,6 +866,13 @@ public sealed partial class MainViewModel
         }
         var players = $"{p.Peers} player{(p.Peers == 1 ? "" : "s")}";
         return text + " · " + (p.WebSeeds > 0 ? players + " + realm server" : players);
+    }
+
+    /// <summary>"the game and 5 patches", "the game", "3 patches".</summary>
+    private static string DescribeShared(SharingSummary summary)
+    {
+        var patches = summary.PatchesShared == 0 ? "" : $"{summary.PatchesShared} patch{(summary.PatchesShared == 1 ? "" : "es")}";
+        return !summary.ClientShared ? patches : patches.Length == 0 ? "the game" : "the game and " + patches;
     }
 
     private static string FormatSize(long bytes) => bytes >= 1L << 30
