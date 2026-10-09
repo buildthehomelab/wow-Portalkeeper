@@ -265,9 +265,13 @@
                 </Border>
 
                 <Border IsVisible="{Binding IsUpdateAvailable}" Background="#0E1823" BorderBrush="#6E5426" BorderThickness="1" Padding="12">
-                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                        <TextBlock Text="{Binding AvailableReleaseText}" Foreground="#F6D477" TextWrapping="Wrap" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Content="VIEW RELEASE" Click="ViewRelease_Click" />
+                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">
+                        <StackPanel VerticalAlignment="Center" Spacing="2">
+                            <TextBlock Text="{Binding AvailableReleaseText}" Foreground="#F6D477" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding UpdateReadyText}" IsVisible="{Binding IsUpdateReady}" Foreground="#AFA28D" FontSize="12" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="UPDATE NOW" Click="UpdateNow_Click" IsVisible="{Binding IsUpdateReady}" />
+                        <Button Grid.Column="2" Content="VIEW RELEASE" Click="ViewRelease_Click" />
                     </Grid>
                 </Border>
                 <TextBlock Text="{Binding ConfigurationStatus}" TextWrapping="Wrap" Foreground="#AFA28D" />

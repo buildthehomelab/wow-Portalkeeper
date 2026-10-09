@@ -80,4 +80,10 @@ public sealed class PortalkeeperSettings
     public int TorrentPort { get; set; }
     // A client install that was paused or interrupted, resumed by INSTALL WOW.
     public string? PendingClientInstallPath { get; set; }
+    // Installed Windows builds download and run new releases by themselves.
+    public bool AutoUpdatePortalkeeper { get; set; } = true;
+    // The last self-update started: if Portalkeeper comes back still on the old version, the install
+    // failed, so automatic retries of that version wait a while (UPDATE NOW always tries).
+    public string? LastSelfUpdateVersion { get; set; }
+    public DateTimeOffset? LastSelfUpdateUtc { get; set; }
 }

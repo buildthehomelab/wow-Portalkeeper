@@ -87,7 +87,14 @@ Name: "{autodesktop}\Portalkeeper"; Filename: "{app}\Portalkeeper.exe"; WorkingD
 
 [Run]
 Filename: "{app}\Portalkeeper.exe"; Description: "{cm:LaunchProgram,Portalkeeper}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
+; Portalkeeper's own silent self-update (/VERYSILENT /RELAUNCH=1) reopens it when done.
+Filename: "{app}\Portalkeeper.exe"; WorkingDir: "{app}"; Flags: nowait; Check: RelaunchAfterUpdate
 [Code]
+function RelaunchAfterUpdate: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:relaunch|0}') = '1');
+end;
+
 function CleanupFileAttributes(FileName: String): LongWord;
   external 'GetFileAttributesW@kernel32.dll stdcall';
 
