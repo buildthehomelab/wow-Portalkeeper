@@ -12,7 +12,7 @@ public sealed record ReleaseCheckResult(ReleaseCheckState State, string Message,
 // Advisory release information only; this service never downloads application assets.
 public sealed class PortalkeeperReleaseService
 {
-    public const string LatestReleaseEndpoint = "https://api.github.com/repos/Hisha/Portalkeeper/releases/latest";
+    public const string LatestReleaseEndpoint = "https://api.github.com/repos/buildthehomelab/wow-Portalkeeper/releases/latest";
     private static readonly HttpClient SharedHttp = new(new HttpClientHandler { AllowAutoRedirect = false })
         { Timeout = TimeSpan.FromSeconds(8), MaxResponseContentBufferSize = 1024 * 1024 };
     private readonly HttpClient _http;
@@ -39,7 +39,7 @@ public sealed class PortalkeeperReleaseService
         catch (Exception) { version = ""; return false; }
     }
     public static Uri? ReleaseUri(string? tag) => TryStableTag(tag, out _)
-        ? new Uri("https://github.com/Hisha/Portalkeeper/releases/tag/" + Uri.EscapeDataString(tag!)) : null;
+        ? new Uri("https://github.com/buildthehomelab/wow-Portalkeeper/releases/tag/" + Uri.EscapeDataString(tag!)) : null;
 
     private static ReleaseCheckResult Describe(string? tag, string installed)
     {

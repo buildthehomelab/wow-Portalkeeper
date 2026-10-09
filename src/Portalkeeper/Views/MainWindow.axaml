@@ -197,6 +197,20 @@
                                            FontSize="13"
                                            Foreground="#D8CCBA"
                                            TextWrapping="Wrap" />
+                                <!-- Client install over BitTorrent (Vaultrona fork) -->
+                                <ProgressBar Margin="0,8,0,0"
+                                             Height="6"
+                                             Minimum="0"
+                                             Maximum="100"
+                                             Value="{Binding InstallPercent}"
+                                             Foreground="#D09B32"
+                                             Background="#172330"
+                                             IsVisible="{Binding IsInstallingClient}" />
+                                <TextBlock Text="{Binding InstallStatus}"
+                                           IsVisible="{Binding HasInstallStatus}"
+                                           FontSize="12"
+                                           Foreground="#AFA28D"
+                                           TextWrapping="Wrap" />
                             </StackPanel>
 
                             <StackPanel Grid.Column="1"
@@ -207,42 +221,42 @@
                                            FontSize="18"
                                            Foreground="#D8C5EA"
                                            HorizontalAlignment="Center" />
+                                <Button Content="{Binding InstallClientButtonText}"
+                                        Click="InstallClient_Click"
+                                        IsVisible="{Binding CanInstallClient}"
+                                        ToolTip.Tip="Download World of Warcraft 3.3.5a for this realm"
+                                        Padding="18,9" />
+                                <Button Content="PAUSE"
+                                        Click="CancelInstall_Click"
+                                        IsVisible="{Binding IsInstallingClient}"
+                                        Padding="18,9" />
                                 <Button Content="{Binding ClientButtonText}"
                                         Click="LocateClient_Click"
+                                        IsVisible="{Binding !IsInstallingClient}"
                                         Padding="18,9" />
                             </StackPanel>
                         </Grid>
                     </Border>
                 </Grid>
 
-                <!-- Client content -->
+                <!-- Addons. Required patches and addons install and update by themselves (Vaultrona
+                     fork); this lists only the optional ones players choose. -->
                 <Border Background="#0E1823"
                         BorderBrush="#6E5426"
                         BorderThickness="1"
                         CornerRadius="4"
                         Padding="18">
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="CLIENT CONTENT"
-                                   FontSize="12"
-                                   FontWeight="Bold"
-                                   Foreground="#D5AA50" />
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
-                            <StackPanel Spacing="2">
-                                <TextBlock Text="Addons" FontSize="16" FontWeight="SemiBold" Foreground="#F8F0DF" />
-                                <TextBlock Text="{Binding AddonStatus}" FontSize="13" Foreground="#AFA28D" TextWrapping="Wrap" />
-                            </StackPanel>
-                            <Button Grid.Column="1" Content="MANAGE ADDONS" Click="ManageAddons_Click"
-                                    Padding="20,8" VerticalAlignment="Center" />
-                        </Grid>
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16" IsVisible="{Binding HasManagedPatches}">
-                            <StackPanel Spacing="2">
-                                <TextBlock Text="Patches" FontSize="16" FontWeight="SemiBold" Foreground="#F8F0DF" />
-                                <TextBlock Text="{Binding PatchStatus}" FontSize="13" Foreground="#AFA28D" TextWrapping="Wrap" />
-                            </StackPanel>
-                            <Button Grid.Column="1" Content="MANAGE PATCHES" Click="ManagePatches_Click"
-                                    IsEnabled="{Binding ClientValid}" Padding="20,8" VerticalAlignment="Center" />
-                        </Grid>
-                    </StackPanel>
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="ADDONS"
+                                       FontSize="12"
+                                       FontWeight="Bold"
+                                       Foreground="#D5AA50" />
+                            <TextBlock Text="{Binding OptionalAddonStatus}" FontSize="13" Foreground="#AFA28D" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="MANAGE ADDONS" Click="ManageAddons_Click"
+                                IsEnabled="{Binding ClientValid}" Padding="20,8" VerticalAlignment="Center" />
+                    </Grid>
                 </Border>
 
                 <Border IsVisible="{Binding IsUpdateAvailable}" Background="#0E1823" BorderBrush="#6E5426" BorderThickness="1" Padding="12">
@@ -264,7 +278,7 @@
                                        FontSize="11"
                                        FontWeight="Bold"
                                        Foreground="#C99B3D" />
-                            <TextBlock Text="Review realm, client, and addon status above, then enter the realm."
+                            <TextBlock Text="The realm's patches and required addons stay up to date by themselves."
                                        FontSize="12"
                                        Foreground="#8F8577" />
                         </StackPanel>
@@ -328,17 +342,89 @@
                 BorderBrush="#5B431B"
                 BorderThickness="0,1,0,0"
                 Padding="24,10">
-            <Grid ColumnDefinitions="*,Auto">
-                <TextBlock Text="{Binding ApplicationVersion}"
-                           Foreground="#776E62"
-                           VerticalAlignment="Center" />
+            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="18">
+                <StackPanel Orientation="Horizontal" Spacing="18" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding ApplicationVersion}"
+                               Foreground="#776E62"
+                               VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding SharingStatus}"
+                               Foreground="#776E62"
+                               VerticalAlignment="Center" />
+                </StackPanel>
                 <TextBlock Grid.Column="1"
+                           Text="{Binding AccountSummary}"
+                           Foreground="#AFA28D"
+                           VerticalAlignment="Center" />
+                <TextBlock Grid.Column="2"
                            Text="SAME WORLD. MORE TO EXPLORE."
                            Foreground="#6F627E"
                            FontSize="10"
                            VerticalAlignment="Center" />
             </Grid>
         </Border>
+
+        <!-- Login (Vaultrona fork): the launcher is used with the player's game account -->
+        <Grid Grid.RowSpan="3" Background="#F2050A10" IsVisible="{Binding ShowLogin}">
+            <Border Width="420"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Background="#0E1823"
+                    BorderBrush="#B77A20"
+                    BorderThickness="1"
+                    CornerRadius="5"
+                    Padding="28">
+                <StackPanel Spacing="12">
+                    <Border Width="78"
+                            Height="78"
+                            CornerRadius="39"
+                            BorderBrush="#B77A20"
+                            BorderThickness="2"
+                            Background="#11131A"
+                            HorizontalAlignment="Center">
+                        <Image Source="/Assets/portalkeeper-icon.png" Margin="4" Stretch="Uniform" />
+                    </Border>
+                    <TextBlock Text="LOG IN"
+                               HorizontalAlignment="Center"
+                               FontSize="12"
+                               FontWeight="Bold"
+                               Foreground="#D5AA50" />
+                    <TextBlock Text="Use your game account. Portalkeeper keeps you logged in for 30 days."
+                               HorizontalAlignment="Center"
+                               TextAlignment="Center"
+                               TextWrapping="Wrap"
+                               FontSize="12"
+                               Foreground="#AFA28D" />
+                    <TextBox x:Name="AccountNameBox"
+                             PlaceholderText="Account name"
+                             KeyDown="LoginField_KeyDown" />
+                    <TextBox x:Name="PasswordBox"
+                             PlaceholderText="Password"
+                             PasswordChar="•"
+                             KeyDown="LoginField_KeyDown" />
+                    <TextBlock Text="{Binding LoginError}"
+                               IsVisible="{Binding HasLoginError}"
+                               Foreground="#E58A73"
+                               TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding LoginStatus}"
+                               Foreground="#AFA28D"
+                               HorizontalAlignment="Center" />
+                    <Button Content="LOG IN"
+                            IsEnabled="{Binding CanLogIn}"
+                            Click="LogIn_Click"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Center"
+                            FontSize="15"
+                            Padding="18,11"
+                            Background="#1A2631"
+                            BorderBrush="#D09B32" />
+                    <Button Content="CREATE AN ACCOUNT"
+                            Click="CreateAccount_Click"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Center"
+                            Padding="18,8" />
+                </StackPanel>
+            </Border>
+        </Grid>
 
     </Grid>
 </Window>

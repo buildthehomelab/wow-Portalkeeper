@@ -12,6 +12,12 @@ public sealed class PatchService
     private readonly HttpClient _http;
     public PatchService(HttpClient? http = null) => _http = http ?? Http;
 
+    /// <summary>
+    /// Optional faster source (the realm's patch torrents): fills the temp file and returns true, or
+    /// returns false to fall back to the HTTP download. The SHA-256 check below applies either way.
+    /// </summary>
+    public Func<PatchDefinition, string, Task<bool>>? Downloader { get; set; }
+
     private static WowPatchAllocationStore? Allocations(string root, PatchDefinition patch, RealmInfo? realm)
     {
         if (patch.InstallMode == PatchInstallMode.File) return null;
@@ -62,10 +68,14 @@ public sealed class PatchService
         var temp = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            using var response = await _http.GetAsync(patch.SourceUrl, HttpCompletionOption.ResponseHeadersRead);
-            response.EnsureSuccessStatusCode();
-            await using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            { await response.Content.CopyToAsync(output); }
+            if (Downloader is null || !await Downloader(patch, temp))
+            {
+                if (File.Exists(temp)) File.Delete(temp);
+                using var response = await _http.GetAsync(patch.SourceUrl, HttpCompletionOption.ResponseHeadersRead);
+                response.EnsureSuccessStatusCode();
+                await using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                { await response.Content.CopyToAsync(output); }
+            }
             if (!Matches(temp, patch.Sha256)) throw new InvalidDataException("Downloaded patch failed SHA-256 validation. Existing patch preserved.");
             if (allocations is null) destination = FileDestination(root, patch);
             else

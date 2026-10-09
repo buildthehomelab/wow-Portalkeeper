@@ -96,7 +96,7 @@ public partial class ManageAddonsWindow : Window
         try
         {
             IsEnabled = false;
-            await viewModel.InstallOrUpdateAllAsync();
+            await viewModel.UpdateInstalledAddonsAsync();
         }
         catch (Exception ex)
         {

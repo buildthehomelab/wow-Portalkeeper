@@ -1,5 +1,20 @@
 # Portalkeeper Development Guide
 
+## Vaultrona fork (buildthehomelab/wow-Portalkeeper)
+
+This fork is built for one realm and changes three upstream rules on purpose:
+
+* **The realm is built in.** `src/Portalkeeper/Branding/azeroth.realm.conf` is embedded in the executable and copied into the realm store on first run (`RealmBranding`). Its `ConfigURL` keeps it current.
+* **Players log in with their game account** before using the launcher (`LauncherAccountService`, the portal's `api/launcher/`). The token is stored with DPAPI on Windows and owner-only on Linux; the password is never stored.
+* **The fork distributes the client and patches** over BitTorrent with the realm's web seed (`TorrentService`, MonoTorrent). This replaces the upstream "Portalkeeper does not distribute the World of Warcraft client" rule below for this fork only. The safety rules that come with it:
+  * only a complete, hash-verified copy is ever shared; a modified or partial client is not shared and nothing is downloaded into it;
+  * a new install only goes into an empty folder (or one this install started, marked by `.portalkeeper/client-install.json`);
+  * patches are still SHA-256 checked against realm.conf before they're installed, and fall back to HTTP when the torrent fails;
+  * sharing pauses while the game runs and can be turned off in Settings.
+* **Required patches and addons install and update automatically**; players only manage optional addons.
+
+Keep these changes out of upstream pull requests.
+
 ## Project Purpose
 
 Portalkeeper is a cross-platform launcher and client-management tool for World of Warcraft 3.3.5a private realms.
