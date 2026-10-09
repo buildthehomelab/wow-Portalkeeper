@@ -863,7 +863,8 @@ public sealed partial class MainViewModel
             var left = TimeSpan.FromSeconds((p.TotalBytes - p.DoneBytes) / (double)p.DownloadRate);
             text += left.TotalHours >= 1 ? $" · {(int)left.TotalHours} h {left.Minutes} min left" : $" · {Math.Max(1, left.Minutes)} min left";
         }
-        return text + $" · {p.Peers} source{(p.Peers == 1 ? "" : "s")}";
+        var players = $"{p.Peers} player{(p.Peers == 1 ? "" : "s")}";
+        return text + " · " + (p.WebSeeds > 0 ? players + " + realm server" : players);
     }
 
     private static string FormatSize(long bytes) => bytes >= 1L << 30

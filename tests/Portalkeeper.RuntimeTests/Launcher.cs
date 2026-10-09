@@ -411,12 +411,15 @@ internal static partial class Program
         {
             ClientConformanceService.DeleteNonConforming(client, ClientConformanceService.Check(client, torrent, []));
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
-            await torrents.DownloadAsync(torrent, client, keepSharing: false, null, timeout.Token);
+            var webSeeds = 0;
+            await torrents.DownloadAsync(torrent, client, keepSharing: false,
+                new SyncProgress<TorrentProgress>(p => webSeeds = Math.Max(webSeeds, p.WebSeeds)), timeout.Token);
             check("installing over another client leaves exactly the realm's client",
                 ClientConformanceService.Check(client, torrent, []).Matches && File.Exists(addon)
                 && Directory.EnumerateFiles(shipped, "*", SearchOption.AllDirectories).All(f =>
                     File.ReadAllBytes(f).AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(client, Path.GetRelativePath(shipped, f))))));
             check($"only what differs is downloaded ({served:N0} of {total:N0} bytes)", served > 0 && served <= 64 * 1024 + 2 * 16 * 1024);
+            check("the realm's web seed shows up in the download status", webSeeds == 1);
         }
         catch (Exception ex) { check("installing over another client: " + ex.Message, false); }
         finally
@@ -426,6 +429,11 @@ internal static partial class Program
             listener.Close();
             await serving;
         }
+    }
+
+    private sealed class SyncProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
     }
 
     private static void ClientConformanceChecks(string root, Action<string, bool> check)
