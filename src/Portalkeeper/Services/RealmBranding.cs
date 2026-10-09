@@ -32,15 +32,18 @@ public static class RealmBranding
     /// <summary>Where players register an account.</summary>
     public const string AccountSignupUrl = "https://wow.vaultrona.com/";
 
+    /// <summary>The realm's public folder (realm.conf, cache-version.txt, the armory).</summary>
+    public const string RealmBaseUrl = "https://wow.vaultrona.com/realm/";
+
     /// <summary>Patches served from here have a torrent at the launcher API (patch-torrent.php).</summary>
-    public const string PatchBaseUrl = "https://wow.vaultrona.com/realm/";
+    public const string PatchBaseUrl = RealmBaseUrl + "patches/";
 
     /// <summary>
     /// Any short text (a date, a counter). When it changes, every launcher clears its client's Cache
     /// folder before the next launch: the server bumps it after changes the client caches, such as
     /// items, spells or quests. Missing file: nothing happens.
     /// </summary>
-    public const string CacheVersionUrl = PatchBaseUrl + "cache-version.txt";
+    public const string CacheVersionUrl = RealmBaseUrl + "cache-version.txt";
 
     /// <summary>
     /// Writes the embedded realm.conf into the store when the store holds no realm yet. Returns true
@@ -69,7 +72,7 @@ public static class RealmBranding
         return true;
     }
 
-    /// <summary>The server-side file name of a patch hosted in the realm folder, or null for other sources.</summary>
+    /// <summary>The server-side file name of a patch hosted in the realm's patches folder, or null for other sources.</summary>
     public static string? HostedPatchFileName(string sourceUrl)
     {
         if (!sourceUrl.StartsWith(PatchBaseUrl, StringComparison.OrdinalIgnoreCase)) return null;

@@ -35,9 +35,10 @@ internal static partial class Program
                 && !File.Exists(Path.Combine(other, RealmBranding.RealmFileName)));
 
             // Which patches have torrents.
-            Check("realm-folder patch has a torrent name", RealmBranding.HostedPatchFileName(RealmBranding.PatchBaseUrl + "patch-P.MPQ") == "patch-P.MPQ");
+            Check("patches-folder patch has a torrent name", RealmBranding.HostedPatchFileName(RealmBranding.PatchBaseUrl + "patch-P.MPQ") == "patch-P.MPQ");
             Check("escaped name is decoded", RealmBranding.HostedPatchFileName(RealmBranding.PatchBaseUrl + "Patch%2DH.MPQ") == "Patch-H.MPQ");
             Check("subfolders are not torrent patches", RealmBranding.HostedPatchFileName(RealmBranding.PatchBaseUrl + "armory/x.MPQ") is null);
+            Check("patches outside the patches folder are not torrent patches", RealmBranding.HostedPatchFileName(RealmBranding.RealmBaseUrl + "patch-P.MPQ") is null);
             Check("other hosts are not torrent patches", RealmBranding.HostedPatchFileName("https://example.com/realm/patch-P.MPQ") is null);
             Check("traversal is not a torrent patch", RealmBranding.HostedPatchFileName(RealmBranding.PatchBaseUrl + "..") is null);
 
