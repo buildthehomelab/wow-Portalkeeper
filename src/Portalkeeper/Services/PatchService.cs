@@ -87,7 +87,7 @@ public sealed class PatchService
                     throw new InvalidDataException("WoW patch destination changed during download. Retry installation.");
             }
             ManagedRuntimeWriteGuard.Check(root, destination);
-            Backup(root, destination);
+            var replaced = Backup(root, destination);
             // A newly chosen slot is never replaced, even if a foreign file appeared
             // after scanning. Existing allocations retain the shared replacement path.
             File.Move(temp, destination, allocations is null || owned is not null);
@@ -104,6 +104,8 @@ public sealed class PatchService
                     throw;
                 }
             }
+            if (allocations is null)
+                RetiredPatchService.RecordInstall(root, destination, patch.Sha256, replaced, RealmBranding.RetiredPatches);
             ClearClientCache(root);
         }
         finally { if (File.Exists(temp)) File.Delete(temp); }
@@ -138,11 +140,13 @@ public sealed class PatchService
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException) { }
     }
-    private static void Backup(string root, string destination)
+    /// <summary>Copies the file about to be replaced or removed into .portalkeeper/backups; returns the copy.</summary>
+    private static string? Backup(string root, string destination)
     {
-        if (!File.Exists(destination)) return;
+        if (!File.Exists(destination)) return null;
         var backup = ManagedPath.Resolve(root, Path.Combine(".portalkeeper", "backups", "patches", Guid.NewGuid().ToString("N"), Path.GetFileName(destination)));
         Directory.CreateDirectory(Path.GetDirectoryName(backup)!);
         File.Copy(destination, backup);
+        return backup;
     }
 }

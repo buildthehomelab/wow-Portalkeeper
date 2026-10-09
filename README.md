@@ -4,7 +4,7 @@
 >
 > - The realm is built in. Players install it, log in with their game account and play; there's no realm file to place.
 > - **INSTALL WOW** downloads World of Warcraft 3.3.5a over BitTorrent. Players download from each other and from the realm's web seed, and players on the same home network are tried first.
-> - The realm's required and recommended patches and its required addons install and update by themselves, also over BitTorrent with an HTTP fallback. Players only choose optional addons. Patches get a torrent when realm.conf points them at the realm's `patches/` folder (`https://wow.vaultrona.com/realm/patches/<file>`); patches anywhere else download over plain HTTP.
+> - The realm's required and recommended patches and its required addons install and update by themselves, also over BitTorrent with an HTTP fallback. Players only choose optional addons. Patches get a torrent when realm.conf points them at the realm's `patches/` folder (`https://wow.vaultrona.com/realm/patches/<file>`); patches anywhere else download over plain HTTP. When realm.conf drops a patch, the launcher takes it out of the client (only while the file is still exactly the patch it installed) and puts back the file it replaced: its own backup if that passes the client torrent's hashes, else a fresh copy from the realm's web seed.
 > - While Portalkeeper is open it shares finished downloads with other players: only copies that exactly match the realm's, never while the game runs, and with an upload limit (Settings → Account and sharing).
 >
 > - Installed Windows builds update themselves: a new release downloads in the background, is checked against GitHub's published SHA-256, and installs when you're not playing (Settings can turn this off).
