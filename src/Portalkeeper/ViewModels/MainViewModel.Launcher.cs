@@ -234,8 +234,25 @@ public sealed partial class MainViewModel
             await _torrents.DownloadAsync(_clientTorrent, target, keepSharing: true, progress, cancel);
 
             _savedSettings.PendingClientInstallPath = null;
+            var installed = "World of Warcraft is installed.";
+            // The player's own addons and settings live in the client they used until now: bring
+            // them along (copied, never overwriting) before the launcher switches to the new one.
+            var previousClient = ClientPath;
+            SetInstallStatus("Copying your addons and settings from your old client...", 100);
+            try
+            {
+                var imported = await Task.Run(() => ClientImportService.Import(previousClient, target));
+                if (imported.Addons > 0 || imported.SettingsFiles > 0)
+                    installed += $" Copied {imported.Addons} addon(s) and your game settings from {previousClient}.";
+                if (imported.Failed > 0)
+                    installed += $" {imported.Failed} file(s) couldn't be copied; they're still in {previousClient}.";
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                installed += " Your addons couldn't be copied from your old client: " + ex.Message;
+            }
             _isInstallingClient = false; // lets the realm's required patches and addons install next
-            SetInstallStatus("World of Warcraft is installed.", 100);
+            SetInstallStatus(installed, 100);
             SetClientDirectory(target);
             if (!ClientValid)
                 throw new InvalidDataException("The downloaded client didn't pass validation: " + ClientStatus);

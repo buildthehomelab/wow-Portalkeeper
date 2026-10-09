@@ -113,6 +113,41 @@ internal static partial class Program
                 RetiredPatchService.RemoveClientFiles(removeClient, [glueEntry], withoutGlue) == 1 && !File.Exists(gluePath));
             Check("nothing is put back", !File.Exists(gluePath) && RetiredPatchService.RemoveClientFiles(removeClient, [glueEntry], withoutGlue) == 0);
 
+            // INSTALL WOW brings the player's own addons and settings from the old client.
+            var oldClient = Path.Combine(root, "import", "Old WoW");
+            var newClient = Path.Combine(root, "import", "Evermore");
+            var oldAddOns = Path.Combine(oldClient, "Interface", "AddOns");
+            void Write(string path, string text) { Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllText(path, text); }
+            Write(Path.Combine(oldAddOns, "MyAddon", "MyAddon.toc"), "## Title: Mine");
+            Write(Path.Combine(oldAddOns, "MyAddon", "Libs", "Lib.lua"), "lib");
+            Write(Path.Combine(oldAddOns, "Shared", "Shared.toc"), "old");
+            Write(Path.Combine(oldAddOns, "Blizzard_Old", "Blizzard_Old.toc"), "x");
+            Write(Path.Combine(oldAddOns, "NotAnAddon", "readme.txt"), "x");
+            Write(Path.Combine(oldClient, "WTF", "Config.wtf"), "SET gxApi \"d3d9\"");
+            Write(Path.Combine(oldClient, "WTF", "Account", "ALICE", "SavedVariables", "MyAddon.lua"), "saved");
+            Write(Path.Combine(oldClient, "WTF", "Account", "ALICE", "bindings-cache.wtf"), "old bindings");
+            Write(Path.Combine(newClient, "Interface", "AddOns", "Shared", "Shared.toc"), "new");
+            Write(Path.Combine(newClient, "WTF", "Account", "ALICE", "bindings-cache.wtf"), "new bindings");
+            var outside = Path.Combine(root, "import", "outside");
+            Write(Path.Combine(outside, "Linked.toc"), "x");
+            Directory.CreateSymbolicLink(Path.Combine(oldAddOns, "Linked"), outside);
+            var imported = ClientImportService.Import(oldClient, newClient);
+            var newAddOns = Path.Combine(newClient, "Interface", "AddOns");
+            Check("player's addon is copied whole", File.Exists(Path.Combine(newAddOns, "MyAddon", "Libs", "Lib.lua")));
+            Check("an addon the new client has is not overwritten", File.ReadAllText(Path.Combine(newAddOns, "Shared", "Shared.toc")) == "new");
+            Check("Blizzard_ folders, folders without a .toc and links are left out",
+                !Directory.Exists(Path.Combine(newAddOns, "Blizzard_Old")) && !Directory.Exists(Path.Combine(newAddOns, "NotAnAddon"))
+                && !Directory.Exists(Path.Combine(newAddOns, "Linked")));
+            Check("SavedVariables are copied", File.ReadAllText(Path.Combine(newClient, "WTF", "Account", "ALICE", "SavedVariables", "MyAddon.lua")) == "saved");
+            Check("settings the new client has are not overwritten", File.ReadAllText(Path.Combine(newClient, "WTF", "Account", "ALICE", "bindings-cache.wtf")) == "new bindings");
+            Check("Config.wtf is not copied", !File.Exists(Path.Combine(newClient, "WTF", "Config.wtf")));
+            Check("the old client is left as it was", File.ReadAllText(Path.Combine(oldAddOns, "Shared", "Shared.toc")) == "old"
+                && File.Exists(Path.Combine(oldAddOns, "MyAddon", "MyAddon.toc")));
+            Check("import counts", imported == new ClientImportResult(1, 1, 0));
+            Check("importing again copies nothing", ClientImportService.Import(oldClient, newClient) == new ClientImportResult(0, 0, 0));
+            Check("no import from inside the new client", ClientImportService.Import(newAddOns, newClient) == new ClientImportResult(0, 0, 0));
+            Check("no import without an old client", ClientImportService.Import("", newClient) == new ClientImportResult(0, 0, 0));
+
             // Sharing rules.
             var client = Path.Combine(root, "client", "WoW");
             Directory.CreateDirectory(Path.Combine(client, "Data"));
