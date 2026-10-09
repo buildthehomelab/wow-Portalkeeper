@@ -35,6 +35,8 @@
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Cinzel (SIL Open Font License 1.1) is embedded under Assets/Fonts; its license ships beside the exe. -->
+    <None Include="Assets\Fonts\Cinzel-OFL.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <!-- The realm this build is made for; copied into the realm store on first run. -->
     <EmbeddedResource Include="Branding\azeroth.realm.conf" LogicalName="Portalkeeper.Branding.azeroth.realm.conf" />
   </ItemGroup>

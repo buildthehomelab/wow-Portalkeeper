@@ -45,7 +45,7 @@
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Padding" Value="4,2" />
-            <Setter Property="FontFamily" Value="Cinzel, Georgia, Times New Roman, serif" />
+            <Setter Property="FontFamily" Value="avares://Portalkeeper/Assets/Fonts#Cinzel" />
             <Setter Property="FontSize" Value="13" />
             <Setter Property="Foreground" Value="#D8CCBA" />
         </Style>
@@ -106,7 +106,7 @@
         </Style>
 
         <Style Selector="TextBlock.serif">
-            <Setter Property="FontFamily" Value="Cinzel, Georgia, Times New Roman, serif" />
+            <Setter Property="FontFamily" Value="avares://Portalkeeper/Assets/Fonts#Cinzel" />
         </Style>
     </Window.Styles>
 
