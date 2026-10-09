@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace Portalkeeper.Services;
 
@@ -15,10 +17,16 @@ public sealed record ClientImportResult(int Addons, int SettingsFiles, int Faile
 /// those) and the files under WTF/Account (SavedVariables, macros, key bindings, chat layout).
 /// Config.wtf isn't: it holds the old client's graphics settings and realm, and the launcher writes
 /// what it needs at launch.
+///
+/// Addons the realm offers (<c>realmAddonFolders</c>) aren't copied either, nor addons that need
+/// one of them (## Dependencies): the launcher installs the realm's own version, and an Optional one
+/// is the player's choice in its Addons list. A base client's bundled copy (TheraWoW's DragonUI with
+/// its NewEra panels) would otherwise come along unasked.
 /// </summary>
 public static class ClientImportService
 {
-    public static ClientImportResult Import(string sourceClient, string targetClient)
+    public static ClientImportResult Import(string sourceClient, string targetClient,
+        IEnumerable<string>? realmAddonFolders = null)
     {
         if (string.IsNullOrWhiteSpace(sourceClient) || !Directory.Exists(sourceClient))
             return new(0, 0, 0);
@@ -32,12 +40,26 @@ public static class ClientImportService
         if (Directory.Exists(sourceAddOns))
         {
             var targetAddOns = ManagedPath.Resolve(target, "Interface/AddOns");
+            var candidates = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
             foreach (var folder in Directory.EnumerateDirectories(sourceAddOns, "*", NoLinks(false)))
             {
                 var name = Path.GetFileName(folder);
-                if (name.StartsWith("Blizzard", StringComparison.OrdinalIgnoreCase)
-                    || !Directory.EnumerateFiles(folder, "*.toc", NoLinks(false)).Any())
-                    continue;
+                var tocs = Directory.EnumerateFiles(folder, "*.toc", NoLinks(false)).ToArray();
+                if (!name.StartsWith("Blizzard", StringComparison.OrdinalIgnoreCase) && tocs.Length > 0)
+                    candidates[name] = tocs.SelectMany(Dependencies).ToArray();
+            }
+            var skipped = new HashSet<string>(realmAddonFolders ?? [], StringComparer.OrdinalIgnoreCase);
+            for (var more = true; more;)
+            {
+                more = false;
+                foreach (var (name, dependencies) in candidates)
+                    if (!skipped.Contains(name) && dependencies.Any(skipped.Contains))
+                        more = skipped.Add(name);
+            }
+            foreach (var name in candidates.Keys)
+            {
+                var folder = Path.Combine(sourceAddOns, name);
+                if (skipped.Contains(name)) continue;
                 var destination = Path.Combine(targetAddOns, name);
                 if (Directory.Exists(destination) || File.Exists(destination)) continue;
                 try
@@ -68,6 +90,18 @@ public static class ClientImportService
             }
         }
         return new(addons, settings, failed);
+    }
+
+    /// <summary>Addons a .toc can't load without (## Dependencies, ## RequiredDeps, ## Dep...).</summary>
+    private static IEnumerable<string> Dependencies(string toc)
+    {
+        foreach (var line in File.ReadLines(toc).Take(64))
+        {
+            var match = Regex.Match(line, @"^##\s*(?:Dependencies|RequiredDeps|Dep\w*)\s*:(.*)$", RegexOptions.IgnoreCase);
+            if (!match.Success) continue;
+            foreach (var name in match.Groups[1].Value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                yield return name;
+        }
     }
 
     private static void CopyDirectory(string source, string destination)

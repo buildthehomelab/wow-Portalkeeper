@@ -128,23 +128,33 @@ internal static partial class Program
             Write(Path.Combine(oldClient, "WTF", "Account", "ALICE", "bindings-cache.wtf"), "old bindings");
             Write(Path.Combine(newClient, "Interface", "AddOns", "Shared", "Shared.toc"), "new");
             Write(Path.Combine(newClient, "WTF", "Account", "ALICE", "bindings-cache.wtf"), "new bindings");
+            Write(Path.Combine(oldAddOns, "DragonUI", "DragonUI.toc"), "## Title: DragonUI\n## OptionalDeps: Blizzard_TimeManager");
+            Write(Path.Combine(oldAddOns, "DragonUI_Options", "DragonUI_Options.toc"), "## Dependencies: DragonUI");
+            Write(Path.Combine(oldAddOns, "DragonUI_NewEra", "DragonUI_NewEra.toc"), "## Dependencies: DragonUI, !!!ClassicAPI");
+            Write(Path.Combine(oldAddOns, "NewEraPlugin", "NewEraPlugin.toc"), "## RequiredDeps: DragonUI_NewEra");
+            Write(Path.Combine(oldAddOns, "!!!ClassicAPI", "!!!ClassicAPI.toc"), "## Title: ClassicAPI");
             var outside = Path.Combine(root, "import", "outside");
             Write(Path.Combine(outside, "Linked.toc"), "x");
             Directory.CreateSymbolicLink(Path.Combine(oldAddOns, "Linked"), outside);
-            var imported = ClientImportService.Import(oldClient, newClient);
+            var imported = ClientImportService.Import(oldClient, newClient, ["DragonUI", "Auctionator"]);
             var newAddOns = Path.Combine(newClient, "Interface", "AddOns");
             Check("player's addon is copied whole", File.Exists(Path.Combine(newAddOns, "MyAddon", "Libs", "Lib.lua")));
             Check("an addon the new client has is not overwritten", File.ReadAllText(Path.Combine(newAddOns, "Shared", "Shared.toc")) == "new");
             Check("Blizzard_ folders, folders without a .toc and links are left out",
                 !Directory.Exists(Path.Combine(newAddOns, "Blizzard_Old")) && !Directory.Exists(Path.Combine(newAddOns, "NotAnAddon"))
                 && !Directory.Exists(Path.Combine(newAddOns, "Linked")));
+            Check("an addon the realm offers is left to the realm", !Directory.Exists(Path.Combine(newAddOns, "DragonUI")));
+            Check("addons that need it are left out too, all the way down",
+                !Directory.Exists(Path.Combine(newAddOns, "DragonUI_Options")) && !Directory.Exists(Path.Combine(newAddOns, "DragonUI_NewEra"))
+                && !Directory.Exists(Path.Combine(newAddOns, "NewEraPlugin")));
+            Check("an unrelated library still comes along", Directory.Exists(Path.Combine(newAddOns, "!!!ClassicAPI")));
             Check("SavedVariables are copied", File.ReadAllText(Path.Combine(newClient, "WTF", "Account", "ALICE", "SavedVariables", "MyAddon.lua")) == "saved");
             Check("settings the new client has are not overwritten", File.ReadAllText(Path.Combine(newClient, "WTF", "Account", "ALICE", "bindings-cache.wtf")) == "new bindings");
             Check("Config.wtf is not copied", !File.Exists(Path.Combine(newClient, "WTF", "Config.wtf")));
             Check("the old client is left as it was", File.ReadAllText(Path.Combine(oldAddOns, "Shared", "Shared.toc")) == "old"
                 && File.Exists(Path.Combine(oldAddOns, "MyAddon", "MyAddon.toc")));
-            Check("import counts", imported == new ClientImportResult(1, 1, 0));
-            Check("importing again copies nothing", ClientImportService.Import(oldClient, newClient) == new ClientImportResult(0, 0, 0));
+            Check("import counts", imported == new ClientImportResult(2, 1, 0));
+            Check("importing again copies nothing", ClientImportService.Import(oldClient, newClient, ["DragonUI", "Auctionator"]) == new ClientImportResult(0, 0, 0));
             Check("no import from inside the new client", ClientImportService.Import(newAddOns, newClient) == new ClientImportResult(0, 0, 0));
             Check("no import without an old client", ClientImportService.Import("", newClient) == new ClientImportResult(0, 0, 0));
 

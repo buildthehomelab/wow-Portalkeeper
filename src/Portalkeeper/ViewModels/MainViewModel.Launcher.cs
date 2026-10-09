@@ -238,10 +238,11 @@ public sealed partial class MainViewModel
             // The player's own addons and settings live in the client they used until now: bring
             // them along (copied, never overwriting) before the launcher switches to the new one.
             var previousClient = ClientPath;
+            var realmAddonFolders = _realmInfo?.Addons.Select(a => a.Folder).ToArray() ?? [];
             SetInstallStatus("Copying your addons and settings from your old client...", 100);
             try
             {
-                var imported = await Task.Run(() => ClientImportService.Import(previousClient, target));
+                var imported = await Task.Run(() => ClientImportService.Import(previousClient, target, realmAddonFolders));
                 if (imported.Addons > 0 || imported.SettingsFiles > 0)
                     installed += $" Copied {imported.Addons} addon(s) and your game settings from {previousClient}.";
                 if (imported.Failed > 0)
