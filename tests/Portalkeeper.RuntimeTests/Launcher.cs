@@ -176,9 +176,9 @@ internal static partial class Program
             Check("nothing is shared while sharing is off", !await sharing.ShareAsync(torrent, client));
             await sharing.ConfigureAsync(true, 0, 47391);
             Check("an exact copy is shared", await sharing.ShareAsync(torrent, client));
-            Check("summary counts it", sharing.Summary().Shared == 1);
+            Check("summary counts it", (await sharing.SummaryAsync(TorrentService.InfoHashOf(torrent))) is { Shared: 1, ClientShared: true, PatchesShared: 0 });
             await sharing.StopSharingExceptAsync(Array.Empty<string>());
-            Check("stop sharing removes it", sharing.Summary().Shared == 0);
+            Check("stop sharing removes it", (await sharing.SummaryAsync()).Shared == 0);
 
             var modified = Path.Combine(root, "modified", "WoW");
             Directory.CreateDirectory(Path.Combine(modified, "Data"));
@@ -214,12 +214,12 @@ internal static partial class Program
             await discard.ConfigureAsync(true, 0, 47392);
             Check("copy shared before discard", await discard.ShareAsync(torrent, copy));
             await discard.DiscardAsync(torrent, Path.Combine(root, "somewhere-else"));
-            Check("discard with another folder keeps the files", File.Exists(Path.Combine(copy, "Data", "common.MPQ")) && discard.Summary().Shared == 1);
+            Check("discard with another folder keeps the files", File.Exists(Path.Combine(copy, "Data", "common.MPQ")) && (await discard.SummaryAsync()).Shared == 1);
             await discard.DiscardAsync(torrent, copy);
-            Check("discard removes the torrent and its files", !File.Exists(Path.Combine(copy, "Data", "common.MPQ")) && discard.Summary().Shared == 0);
+            Check("discard removes the torrent and its files", !File.Exists(Path.Combine(copy, "Data", "common.MPQ")) && (await discard.SummaryAsync()).Shared == 0);
             await discard.PauseAllAsync();
             await discard.ResumeAllAsync();
-            Check("pause/resume with nothing running is harmless", discard.Summary().Shared == 0);
+            Check("pause/resume with nothing running is harmless", (await discard.SummaryAsync()).Shared == 0);
             await discard.ShutdownAsync();
 
             // Same size and timestamp but different bytes can't be caught by the stamp check, so a
