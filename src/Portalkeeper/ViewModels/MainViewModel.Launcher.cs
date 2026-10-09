@@ -25,6 +25,7 @@ public sealed partial class MainViewModel
     private bool _isCheckingLogin = true;
     private bool _isLoggingIn;
     private string _loginError = "";
+    private string _rememberedAccountName = "";
     private bool _isInstallingClient;
     private CancellationTokenSource? _installCancel;
     private string _installStatus = "";
@@ -59,6 +60,8 @@ public sealed partial class MainViewModel
     public string AccountSummary => _session is null ? "" : "Logged in as " + _session.AccountName;
     public string AccountSignupUrl => RealmBranding.AccountSignupUrl;
     public string LoginStatus => _isCheckingLogin ? "Checking your login..." : _isLoggingIn ? "Logging in..." : "";
+    /// <summary>The account of a saved login that has to be entered again, to pre-fill the login form.</summary>
+    public string RememberedAccountName => _rememberedAccountName;
 
     private async Task RestoreLoginAsync()
     {
@@ -66,6 +69,14 @@ public sealed partial class MainViewModel
         {
             var saved = _sessionStore.Load();
             if (saved is null) return;
+            if (saved.GamePassword is null)
+            {
+                // Saved by a launcher before 0.5.7, which didn't keep the password the game signs in with.
+                _sessionStore.Clear();
+                _rememberedAccountName = saved.AccountName;
+                _loginError = "Log in once more so Portalkeeper can sign you in to the game too.";
+                return;
+            }
             var (state, session) = await _accountService.CheckAsync(saved);
             switch (state)
             {
@@ -142,6 +153,16 @@ public sealed partial class MainViewModel
         await SyncRequiredAndShareAsync();
     }
 
+    /// <summary>
+    /// The game password for the client's login screen: only for the built-in realm, and only when it
+    /// ships the login patch that takes it (a stock login screen would list it as an account name).
+    /// </summary>
+    private string? GamePasswordForLaunch(RealmInfo realm) =>
+        RealmBranding.IsBuiltIn(realm) && realm.Patches.Any(p => p.InstallMode == PatchInstallMode.File
+            && string.Equals(p.FileName, RealmBranding.LoginPatchFileName, StringComparison.OrdinalIgnoreCase))
+            ? _session?.GamePassword
+            : null;
+
     private void NotifyLoginChanged()
     {
         OnPropertyChanged(nameof(IsLoggedIn));
@@ -153,6 +174,7 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(LoginStatus));
         OnPropertyChanged(nameof(AccountName));
         OnPropertyChanged(nameof(AccountSummary));
+        OnPropertyChanged(nameof(RememberedAccountName));
         NotifyInstallChanged();
         UpdateLaunchReadinessStatus();
     }
@@ -371,6 +393,11 @@ public sealed partial class MainViewModel
                 RealmBranding.IsBuiltIn(realm) ? RealmBranding.RetiredPatches : [],
                 torrent, DownloadClientFileAsync, StopAllSharingAsync, status, CancellationToken.None);
             if (result.Removed > 0) RefreshPatches();
+            if (torrent is not null && RealmBranding.IsBuiltIn(realm))
+            {
+                var root = EffectiveClientPath;
+                await Task.Run(() => RetiredPatchService.RemoveClientFiles(root, RealmBranding.RemovedClientFiles, torrent));
+            }
             _syncStatus = result.Pending > 0
                 ? "Couldn't restore some client files the realm's old patches replaced; CHECK AGAIN retries."
                 : "";

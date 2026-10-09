@@ -335,13 +335,14 @@
                                 </LinearGradientBrush>
                             </TextBlock.Foreground>
                         </TextBlock>
-                        <TextBlock Text="Log in with your game account. Portalkeeper keeps you logged in for 30 days."
+                        <TextBlock Text="Log in with your game account. Portalkeeper keeps you logged in for 30 days and signs you in to the game."
                                    HorizontalAlignment="Center"
                                    TextAlignment="Center"
                                    TextWrapping="Wrap"
                                    FontSize="12"
                                    Foreground="#AFA28D" />
                         <TextBox x:Name="AccountNameBox"
+                                 Text="{Binding RememberedAccountName, Mode=OneWay}"
                                  PlaceholderText="Account name"
                                  KeyDown="LoginField_KeyDown" />
                         <TextBox x:Name="PasswordBox"

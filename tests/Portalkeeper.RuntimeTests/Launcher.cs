@@ -56,10 +56,62 @@ internal static partial class Program
                 !OperatingSystem.IsWindows() || !File.ReadAllText(sessionPath).Contains(session.Token, StringComparison.Ordinal));
             if (!OperatingSystem.IsWindows())
                 Check("saved login is owner-only", (File.GetUnixFileMode(sessionPath) & (UnixFileMode.GroupRead | UnixFileMode.OtherRead)) == 0);
+            var withPassword = session with { GamePassword = "hunter2" };
+            sessions.Save(withPassword);
+            Check("saved login keeps the game password", sessions.Load()?.GamePassword == "hunter2");
+            Check("saved login doesn't contain the game password in clear on Windows",
+                !OperatingSystem.IsWindows() || !File.ReadAllText(sessionPath).Contains("hunter2", StringComparison.Ordinal));
             File.WriteAllText(sessionPath, "not json");
             Check("damaged saved login is ignored", sessions.Load() is null);
             sessions.Clear();
             Check("logout clears the saved login", !File.Exists(sessionPath));
+
+            // Game password handed to the login patch through Config.wtf.
+            var prefix = RealmLaunchService.GamePasswordPrefix;
+            var config = "SET locale \"enUS\"\r\nSET accountList \"" + prefix + "hunter2\"\r\nSET accountName \"ALICE\"\r\n";
+            Check("password line is blanked", RealmLaunchService.WithoutGamePassword(config)
+                == "SET locale \"enUS\"\r\nSET accountList \"\"\r\nSET accountName \"ALICE\"\r\n");
+            Check("an account list that isn't ours is kept",
+                RealmLaunchService.WithoutGamePassword("SET accountList \"!ALICE|BOB|\"\n") == "SET accountList \"!ALICE|BOB|\"\n");
+            var wtfClient = Path.Combine(root, "wtf-client");
+            Directory.CreateDirectory(Path.Combine(wtfClient, "WTF"));
+            var wtf = Path.Combine(wtfClient, "WTF", "Config.wtf");
+            File.WriteAllText(wtf, config, new UTF8Encoding(true));
+            RealmLaunchService.ForgetGamePassword(wtfClient);
+            var forgotten = File.ReadAllBytes(wtf);
+            Check("forgetting the password leaves no password", !Encoding.UTF8.GetString(forgotten).Contains("hunter2", StringComparison.Ordinal));
+            Check("forgetting the password keeps the rest and the BOM", forgotten.AsSpan().StartsWith(Encoding.UTF8.GetPreamble())
+                && Encoding.UTF8.GetString(forgotten).Contains("SET accountName \"ALICE\"", StringComparison.Ordinal));
+            RealmLaunchService.ForgetGamePassword(Path.Combine(root, "no-such-client"));
+            Check("forgetting without a Config.wtf does nothing", true);
+
+            // Client files the realm dropped from its client torrent (TheraWoW's login screen).
+            var removeClient = Path.Combine(root, "remove", "WoW");
+            Directory.CreateDirectory(Path.Combine(removeClient, "Data", "enUS"));
+            File.WriteAllBytes(Path.Combine(removeClient, "Wow.exe"), RandomNumberGenerator.GetBytes(40_000));
+            var glue = RandomNumberGenerator.GetBytes(50_000);
+            var gluePath = Path.Combine(removeClient, "Data", "enUS", "patch-enUS-4.MPQ");
+            File.WriteAllBytes(gluePath, glue);
+            var glueEntry = new RetiredPatchService.Entry
+            {
+                Path = "Data/enUS/patch-enUS-4.MPQ", Size = glue.Length,
+                Sha256 = Convert.ToHexString(SHA256.HashData(glue)).ToLowerInvariant()
+            };
+            var withGlue = FixtureTorrent(removeClient, 16_384);
+            Check("a file the client torrent still carries is kept",
+                RetiredPatchService.RemoveClientFiles(removeClient, [glueEntry], withGlue) == 0 && File.Exists(gluePath));
+            File.Move(gluePath, gluePath + ".aside");
+            var withoutGlue = FixtureTorrent(removeClient, 16_384);
+            File.Move(gluePath + ".aside", gluePath);
+            var changedGlue = (byte[])glue.Clone();
+            changedGlue[10] ^= 0xFF;
+            File.WriteAllBytes(gluePath, changedGlue);
+            Check("a changed copy is the player's and is kept",
+                RetiredPatchService.RemoveClientFiles(removeClient, [glueEntry], withoutGlue) == 0 && File.Exists(gluePath));
+            File.WriteAllBytes(gluePath, glue);
+            Check("the shipped file is removed once the torrent drops it",
+                RetiredPatchService.RemoveClientFiles(removeClient, [glueEntry], withoutGlue) == 1 && !File.Exists(gluePath));
+            Check("nothing is put back", !File.Exists(gluePath) && RetiredPatchService.RemoveClientFiles(removeClient, [glueEntry], withoutGlue) == 0);
 
             // Sharing rules.
             var client = Path.Combine(root, "client", "WoW");

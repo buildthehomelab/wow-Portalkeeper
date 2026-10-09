@@ -69,6 +69,23 @@ public static class RealmBranding
     ];
 
     /// <summary>
+    /// The realm patch whose AccountLogin.lua signs in with the launcher login (wow-server
+    /// tools/client-patches/login). The game password is only handed to clients that install it.
+    /// </summary>
+    public const string LoginPatchFileName = "patch-L.MPQ";
+
+    /// <summary>
+    /// Client files the realm's client torrent used to carry and doesn't want any more. Removed while
+    /// still byte-for-byte the shipped file and no longer in the client torrent; never restored.
+    /// patch-enUS-4.MPQ is the TheraWoW base client's login screen (its logo, video, music and links),
+    /// which replaces the stock Wrath login screen and hides its cinematics button.
+    /// </summary>
+    public static readonly IReadOnlyList<RetiredPatchService.Entry> RemovedClientFiles =
+    [
+        new() { Path = "Data/enUS/patch-enUS-4.MPQ", Size = 413557768, Sha256 = "76c1438f276ed92ab5412ff66ef8997043f1b63d34dfe7f01f4a7bd86456b758" },
+    ];
+
+    /// <summary>
     /// Writes the embedded realm.conf into the store when the store holds no realm yet. Returns true
     /// when it wrote the file. A realm the player already has (including a newer refreshed copy of this
     /// one) is never touched.
