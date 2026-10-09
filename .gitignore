@@ -4,6 +4,8 @@ eitrigg.conf
 
 # Keep the public example configuration
 !config/example.realm.conf
+# The realm built into the Evermore launcher (public; embedded in the executable)
+!src/Portalkeeper/Branding/azeroth.realm.conf
 
 # Local Portalkeeper configuration
 portalkeeper.local.conf
