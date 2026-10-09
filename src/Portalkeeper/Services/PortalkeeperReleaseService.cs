@@ -17,9 +17,14 @@ public sealed class PortalkeeperReleaseService
         { Timeout = TimeSpan.FromSeconds(8), MaxResponseContentBufferSize = 1024 * 1024 };
     private readonly HttpClient _http;
     private readonly Func<DateTimeOffset> _now;
+    private readonly Uri _portalVersion;
     private readonly SemaphoreSlim _checkLock = new(1, 1);
-    public PortalkeeperReleaseService(HttpClient? http = null, Func<DateTimeOffset>? now = null)
-    { _http = http ?? SharedHttp; _now = now ?? (() => DateTimeOffset.UtcNow); }
+    public PortalkeeperReleaseService(HttpClient? http = null, Func<DateTimeOffset>? now = null, Uri? portalVersion = null)
+    {
+        _http = http ?? SharedHttp;
+        _now = now ?? (() => DateTimeOffset.UtcNow);
+        _portalVersion = portalVersion ?? new Uri(RealmBranding.LauncherApi, "version.php");
+    }
 
     public static bool IsCheckDue(DateTimeOffset? last, DateTimeOffset now) =>
         last is null || now < last.Value || now - last.Value >= TimeSpan.FromHours(6);
@@ -60,6 +65,18 @@ public sealed class PortalkeeperReleaseService
         await _checkLock.WaitAsync();
         try
         {
+            // Evermore fork: the portal names the newest release and can be asked every few minutes.
+            // GitHub's API (60 requests an hour per address, shared by everyone on one network) is
+            // only the fallback for when the portal can't be reached.
+            if (await PortalTagAsync() is { } portalTag)
+            {
+                if (settings.LatestPortalkeeperReleaseTag != portalTag)
+                {
+                    settings.LatestPortalkeeperReleaseTag = portalTag;
+                    Persist(settings, save);
+                }
+                return Describe(portalTag, installed);
+            }
             var now = _now();
             if (!manual && !IsCheckDue(settings.LastPortalkeeperUpdateCheckUtc, now))
                 return Describe(settings.LatestPortalkeeperReleaseTag, installed);
@@ -86,5 +103,21 @@ public sealed class PortalkeeperReleaseService
         }
         catch (Exception) { return new(ReleaseCheckState.Failed, "Unable to check for updates."); }
         finally { _checkLock.Release(); }
+    }
+
+    /// <summary>The stable release tag the portal's version.php names, or null when it can't say.</summary>
+    private async Task<string?> PortalTagAsync()
+    {
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            using var response = await _http.GetAsync(_portalVersion, timeout.Token);
+            if (!response.IsSuccessStatusCode) return null;
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
+            // Only the tag is used; downloads still come from this repository's release and are verified there.
+            var tag = json.RootElement.TryGetProperty("tag", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : null;
+            return TryStableTag(tag, out _) ? tag : null;
+        }
+        catch (Exception) { return null; }
     }
 }

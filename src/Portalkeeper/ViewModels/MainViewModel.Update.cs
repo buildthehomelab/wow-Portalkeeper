@@ -98,8 +98,9 @@ public sealed partial class MainViewModel
         while (await timer.WaitForNextTickAsync())
         {
             TryApplySelfUpdate();
-            // A launcher left open for sharing still looks for releases (the check itself is throttled).
-            if (++ticks % 120 == 0) await CheckForUpdatesAsync(manual: false);
+            // Every 5 minutes: the portal answers, so a new release arrives within minutes even in a
+            // launcher left open for sharing (GitHub itself is still asked at most every 6 hours).
+            if (++ticks % 10 == 0) await CheckForUpdatesAsync(manual: false);
         }
     }
 }
