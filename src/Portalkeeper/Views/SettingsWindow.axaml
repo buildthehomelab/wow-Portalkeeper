@@ -262,8 +262,70 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Isolated runtime (developer test) -->
-                <Border Background="#141018"
+                <!-- Account and sharing (Vaultrona fork) -->
+                <Border Background="#0A141E"
+                        BorderBrush="#40331E"
+                        BorderThickness="1"
+                        CornerRadius="4"
+                        Padding="16">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="ACCOUNT AND SHARING"
+                                   FontSize="11"
+                                   FontWeight="Bold"
+                                   Foreground="#D5AA50" />
+                        <Border Background="#0E1B27" BorderBrush="#3B4B58" BorderThickness="1"
+                                CornerRadius="3" Padding="12,10">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Text="{Binding AccountSummary}"
+                                           Foreground="#F2E7D0"
+                                           FontSize="13"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Content="LOG OUT" Click="LogOut_Click" />
+                            </Grid>
+                        </Border>
+                        <Border Background="#0E1B27" BorderBrush="#3B4B58" BorderThickness="1"
+                                CornerRadius="3" Padding="12,10">
+                            <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto">
+                                <CheckBox Grid.RowSpan="2"
+                                          IsChecked="{Binding ShareDownloads, Mode=TwoWay}"
+                                          VerticalAlignment="Center"
+                                          Margin="0,0,12,0" />
+                                <TextBlock Grid.Column="1"
+                                           Text="Share downloads with other players while Portalkeeper is open"
+                                           Foreground="#F2E7D0"
+                                           FontSize="13"
+                                           FontWeight="SemiBold"
+                                           TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="1"
+                                           Grid.Column="1"
+                                           Text="Players download the client and patches from each other as well as from the realm. Only files that exactly match the realm's are shared, and sharing pauses while you play."
+                                           Margin="0,4,0,0"
+                                           Foreground="#8E9AA5"
+                                           FontSize="11"
+                                           TextWrapping="Wrap" />
+                            </Grid>
+                        </Border>
+                        <Border Background="#0E1B27" BorderBrush="#3B4B58" BorderThickness="1"
+                                CornerRadius="3" Padding="12,10">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                <TextBlock Text="Upload speed limit"
+                                           Foreground="#F2E7D0"
+                                           FontSize="13"
+                                           VerticalAlignment="Center" />
+                                <ComboBox Grid.Column="1"
+                                          MinWidth="140"
+                                          ItemsSource="{Binding UploadLimitChoices}"
+                                          SelectedIndex="{Binding UploadLimitIndex, Mode=TwoWay}"
+                                          IsEnabled="{Binding ShareDownloads}" />
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <!-- Isolated runtime (developer test): hidden for players in the Vaultrona build -->
+                <Border IsVisible="False"
+                        Background="#141018"
                         BorderBrush="#6E3A3A"
                         BorderThickness="1"
                         CornerRadius="4"

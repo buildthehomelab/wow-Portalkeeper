@@ -53,7 +53,8 @@ public sealed class RealmLaunchService
     public RealmLaunchResult PrepareAndLaunch(
         string clientDirectory,
         RealmInfo realm,
-        string? sourceClientDirectory = null)
+        string? sourceClientDirectory = null,
+        string? accountName = null)
     {
         if (string.IsNullOrWhiteSpace(clientDirectory))
             throw new InvalidOperationException(
@@ -105,8 +106,18 @@ public sealed class RealmLaunchService
             ManagedPath.Resolve(fullClientDirectory, ".portalkeeper/backups/config");
         }
         WriteRealmlist(realmlistPath, realm.Address, fullClientDirectory);
+        var settings = new List<(string Name, string Value)>();
         if (!string.IsNullOrWhiteSpace(realm.GameRealmName))
-            WriteGameRealmName(Path.Combine(fullClientDirectory, "WTF", "Config.wtf"), realm.GameRealmName, fullClientDirectory);
+        {
+            if (!IsConfigValue(realm.GameRealmName))
+                throw new InvalidOperationException("GameRealmName contains characters that cannot be written to Config.wtf.");
+            settings.Add(("realmName", realm.GameRealmName));
+        }
+        // The launcher login's account fills the game's login screen (the password is never written).
+        if (!string.IsNullOrWhiteSpace(accountName) && IsConfigValue(accountName))
+            settings.Add(("accountName", accountName));
+        if (settings.Count > 0)
+            WriteConfigSettings(Path.Combine(fullClientDirectory, "WTF", "Config.wtf"), settings, fullClientDirectory);
         var process = LaunchWow(wowExecutable, fullClientDirectory, sourceClientDirectory, realm.Client.Executable);
 
         return new RealmLaunchResult
@@ -253,12 +264,11 @@ public sealed class RealmLaunchService
         File.Copy(realmlistPath, backupPath, false);
     }
 
-    private static void WriteGameRealmName(string configPath, string gameRealmName, string clientDirectory)
-    {
-        if (gameRealmName.Any(char.IsControl) || gameRealmName.Contains('"') || gameRealmName.Contains('\\'))
-            throw new InvalidOperationException("GameRealmName contains characters that cannot be written to Config.wtf.");
+    private static bool IsConfigValue(string value) =>
+        !value.Any(char.IsControl) && !value.Contains('"') && !value.Contains('\\');
 
-        var desiredLine = $"SET realmName \"{gameRealmName}\"";
+    private static void WriteConfigSettings(string configPath, IReadOnlyList<(string Name, string Value)> settings, string clientDirectory)
+    {
         var exists = File.Exists(configPath);
         var current = string.Empty;
         Encoding encoding = new UTF8Encoding(false);
@@ -273,21 +283,26 @@ public sealed class RealmLaunchService
                 encoding = new UTF8Encoding(false);
         }
 
-        var pattern = new Regex(@"^([ \t]*)SET[ \t]+realmName(?:[ \t]+[^\r\n]*)?[ \t]*(?=\r?$)",
-            RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.CultureInvariant);
-        var found = false;
-        var updated = pattern.Replace(current, match =>
+        var updated = current;
+        foreach (var (name, value) in settings)
         {
-            found = true;
-            return match.Groups[1].Value + desiredLine;
-        });
-        if (!found)
-        {
-            var newline = current.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" :
-                current.Contains('\n') ? "\n" : current.Contains('\r') ? "\r" : Environment.NewLine;
-            if (updated.Length > 0 && !updated.EndsWith('\n') && !updated.EndsWith('\r'))
-                updated += newline;
-            updated += desiredLine + newline;
+            var desiredLine = $"SET {name} \"{value}\"";
+            var pattern = new Regex(@"^([ \t]*)SET[ \t]+" + Regex.Escape(name) + @"(?:[ \t]+[^\r\n]*)?[ \t]*(?=\r?$)",
+                RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.CultureInvariant);
+            var found = false;
+            updated = pattern.Replace(updated, match =>
+            {
+                found = true;
+                return match.Groups[1].Value + desiredLine;
+            });
+            if (!found)
+            {
+                var newline = current.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" :
+                    current.Contains('\n') ? "\n" : current.Contains('\r') ? "\r" : Environment.NewLine;
+                if (updated.Length > 0 && !updated.EndsWith('\n') && !updated.EndsWith('\r'))
+                    updated += newline;
+                updated += desiredLine + newline;
+            }
         }
         if (exists && string.Equals(current, updated, StringComparison.Ordinal))
             return;

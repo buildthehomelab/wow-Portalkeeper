@@ -70,6 +70,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(PatchesReady));
         OnPropertyChanged(nameof(PatchStatus));
         OnPropertyChanged(nameof(CanEnterRealm)); OnPropertyChanged(nameof(CanSwitchRealm));
+        NotifyInstallChanged();
         UpdateLaunchReadinessStatus();
     }
     public Task ManagePatchAsync(string id, bool remove) => RunComponentOperationAsync(() => ManagePatchCoreAsync(id, remove));
@@ -82,7 +83,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             if (remove) _patchService.Remove(EffectiveClientPath, patch, _realmInfo);
             else await _patchService.InstallAsync(EffectiveClientPath, patch, _realmInfo);
         }
-        finally { RefreshPatches(); }
+        finally { RefreshPatches(); _ = RefreshSharingAsync(); }
     }
 
 
@@ -157,6 +158,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         _realmArmoryService = new RealmArmoryService();
 
         LoadSavedClient();
+        StartLauncher();
         _ = RediscoverRealmConfigurationAsync();
         _ = RunRealmHealthLoopAsync();
         _ = CheckForUpdatesAsync(manual: false);
@@ -459,6 +461,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(ClientStatusSymbol));
             OnPropertyChanged(nameof(ClientButtonText));
             OnPropertyChanged(nameof(CanEnterRealm)); OnPropertyChanged(nameof(CanSwitchRealm));
+            NotifyInstallChanged();
         }
     }
 
@@ -507,6 +510,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
             _isLaunching = value;
             OnPropertyChanged();
+            NotifyInstallChanged();
             OnPropertyChanged(nameof(CanEnterRealm)); OnPropertyChanged(nameof(CanSwitchRealm));
             OnPropertyChanged(nameof(EnterRealmButtonText));
         }
@@ -535,13 +539,16 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
             _isGameRunning = value;
             OnPropertyChanged();
+            NotifyInstallChanged();
             OnPropertyChanged(nameof(CanEnterRealm)); OnPropertyChanged(nameof(CanSwitchRealm));
             OnPropertyChanged(nameof(EnterRealmButtonText));
         }
     }
 
     public string EnterRealmButtonText =>
-        IsLaunching
+        _isInstallingRequired
+            ? "UPDATING..."
+            : IsLaunching
             ? "LAUNCHING..."
             : IsGameRunning
                 ? "WORLD OF WARCRAFT RUNNING"
@@ -554,6 +561,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         RealmConfigured &&
         (IsIsolatedRealm || (AddonsReady && PatchesReady)) &&
         !IsCheckingAddons &&
+        !_isInstallingRequired &&
         !IsLaunching &&
         !IsGameRunning;
 
@@ -581,9 +589,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             if (unsatisfied.Length > 0) throw new InvalidOperationException("Required addons need attention: " + string.Join(", ", unsatisfied.Select(a => a.Definition.Name)));
             result = _realmLaunchService.PrepareAndLaunch(
                 EffectiveClientPath,
-                _realmInfo, ClientPath);
+                _realmInfo, ClientPath, AccountName);
 
             IsGameRunning = true;
+            await PauseSharingForGameAsync();
             IsLaunching = false;
             LaunchStatus =
                 $"World of Warcraft is running ({result.Locale}).";
@@ -601,8 +610,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         }
         finally
         {
+            var played = IsGameRunning;
             IsLaunching = false;
             IsGameRunning = false;
+            if (played) _ = ResumeSharingAfterGameAsync();
         }
     }
 
@@ -682,7 +693,13 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(LaunchEnvironmentStatus));
 
         RefreshPatches();
-        _ = LoadAddonsAsync();
+        _ = LoadAddonsThenSyncAsync();
+    }
+
+    private async Task LoadAddonsThenSyncAsync()
+    {
+        await LoadAddonsAsync();
+        await SyncRequiredAndShareAsync();
     }
 
     private void LoadSavedClient()
@@ -743,7 +760,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             _isRefreshingConfiguration = false;
             OnPropertyChanged(nameof(CanEnterRealm)); OnPropertyChanged(nameof(CanSwitchRealm));
             UpdateLaunchReadinessStatus();
+            NotifyInstallChanged();
         }
+        // In the background: callers (CHECK AGAIN, realm choice) shouldn't wait for patch downloads.
+        _ = SyncRequiredAndShareAsync();
     }
 
     private async Task LoadRealmConfigurationAsync(string? selectedPath = null)
@@ -796,7 +816,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             _realmHealthState = RealmHealthState.Unknown;
             if (_realmInfo is not null)
             {
-                ApplyClientInfo(_clientService.ValidateClient(ClientPath, _realmInfo.Client));
+                // ClientPath holds a placeholder message until a client is chosen; don't validate that as a path.
+                if (Directory.Exists(ClientPath))
+                    ApplyClientInfo(_clientService.ValidateClient(ClientPath, _realmInfo.Client));
                 if (ArmoryAvailable) _ = LoadArmoryAsync();
             }
         }
@@ -1037,13 +1059,22 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(AddonsReady));
         OnPropertyChanged(nameof(AddonStatusSymbol));
         OnPropertyChanged(nameof(Addons));
+        OnPropertyChanged(nameof(OptionalAddons));
+        OnPropertyChanged(nameof(OptionalAddonStatus));
         OnPropertyChanged(nameof(CanEnterRealm)); OnPropertyChanged(nameof(CanSwitchRealm));
+        NotifyInstallChanged();
     }
 
     private void UpdateLaunchReadinessStatus()
     {
         if (IsLaunching || IsGameRunning)
             return;
+
+        if (_isInstallingRequired || _syncStatus.Length > 0)
+        {
+            LaunchStatus = _syncStatus;
+            return;
+        }
 
         if (!RealmConfigured)
         {
@@ -1053,7 +1084,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
         if (!ClientValid)
         {
-            LaunchStatus = "Locate a supported World of Warcraft 3.3.5a client.";
+            LaunchStatus = IsLoggedIn
+                ? "Install World of Warcraft with INSTALL WOW, or use LOCATE CLIENT if you already have 3.3.5a."
+                : "Locate a supported World of Warcraft 3.3.5a client.";
             return;
         }
 

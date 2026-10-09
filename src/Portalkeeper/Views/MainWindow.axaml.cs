@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Linq;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Portalkeeper.ViewModels;
@@ -177,11 +179,75 @@ public partial class MainWindow : Window
         await window.ShowDialog(this);
     }
 
-    private async void ManagePatches_Click(object? sender, RoutedEventArgs e)
+    private async void LogIn_Click(object? sender, RoutedEventArgs e)
     {
-        if (DataContext is MainViewModel vm)
-            await new ManagePatchesWindow { DataContext = vm }.ShowDialog(this);
+        if (DataContext is not MainViewModel viewModel)
+            return;
+        var password = PasswordBox.Text ?? "";
+        PasswordBox.Text = "";
+        await viewModel.LogInAsync(AccountNameBox.Text ?? "", password);
     }
+
+    private void LoginField_KeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter)
+            return;
+        e.Handled = true;
+        if (sender == AccountNameBox)
+            PasswordBox.Focus();
+        else
+            LogIn_Click(sender, e);
+    }
+
+    private void CreateAccount_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel viewModel)
+            return;
+        try { Process.Start(new ProcessStartInfo(viewModel.AccountSignupUrl) { UseShellExecute = true }); }
+        catch (System.Exception) { /* No browser available; the address is on the realm's website. */ }
+    }
+
+    private async void InstallClient_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel viewModel)
+            return;
+
+        if (viewModel.HasPendingClientInstall)
+        {
+            await viewModel.InstallClientAsync(null);
+            return;
+        }
+
+        await PickInstallFolderAsync(viewModel);
+    }
+
+    private async void InstallElsewhere_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel viewModel)
+            await PickInstallFolderAsync(viewModel);
+    }
+
+    private async System.Threading.Tasks.Task PickInstallFolderAsync(MainViewModel viewModel)
+    {
+        var folders = await StorageProvider.OpenFolderPickerAsync(
+            new FolderPickerOpenOptions
+            {
+                Title = "Choose where to install World of Warcraft",
+                AllowMultiple = false
+            });
+        var folder = folders.FirstOrDefault();
+        if (folder is null)
+            return;
+
+        await viewModel.InstallClientAsync(folder.Path.LocalPath);
+    }
+
+    private void CancelInstall_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel viewModel)
+            viewModel.CancelClientInstall();
+    }
+
     private void ViewRelease_Click(object? sender, RoutedEventArgs e)
     {
         if (DataContext is MainViewModel vm) vm.ViewRelease();

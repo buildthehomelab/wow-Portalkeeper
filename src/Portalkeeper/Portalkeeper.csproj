@@ -29,6 +29,14 @@
       <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
     </PackageReference>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <!-- Client and patch downloads shared between players (BitTorrent with the realm's web seed). -->
+    <PackageReference Include="MonoTorrent" Version="3.0.2" />
+    <!-- Encrypts the saved launcher login for the current Windows user (DPAPI). -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The realm this build is made for; copied into the realm store on first run. -->
+    <EmbeddedResource Include="Branding\azeroth.realm.conf" LogicalName="Portalkeeper.Branding.azeroth.realm.conf" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\..\config\example.realm.conf"

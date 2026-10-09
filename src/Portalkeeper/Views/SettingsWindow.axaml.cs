@@ -24,6 +24,14 @@ public partial class SettingsWindow : Window
     {
         if (DataContext is MainViewModel vm) vm.ViewRelease();
     }
+    private async void LogOut_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel vm)
+        {
+            Close();
+            await vm.LogOutAsync();
+        }
+    }
     private void Close_Click(
         object? sender,
         RoutedEventArgs e)

@@ -74,4 +74,10 @@ public sealed class PortalkeeperSettings
     public string? LatestPortalkeeperReleaseTag { get; set; }
     public string ClientPath { get; set; } = string.Empty;
     public bool HidePortalkeeperWhileGameRuns { get; set; } = true;
+    // Sharing downloads with other players (TorrentService).
+    public bool ShareDownloads { get; set; } = true;
+    public int ShareUploadLimitKiB { get; set; } = 2048;
+    public int TorrentPort { get; set; }
+    // A client install that was paused or interrupted, resumed by INSTALL WOW.
+    public string? PendingClientInstallPath { get; set; }
 }
