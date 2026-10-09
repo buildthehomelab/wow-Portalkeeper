@@ -559,6 +559,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         !_isRefreshingConfiguration &&
         !_isManagingComponents &&
         ClientValid &&
+        _clientCheck == ClientCheck.Ok &&
         RealmConfigured &&
         (IsIsolatedRealm || (AddonsReady && PatchesReady)) &&
         !IsCheckingAddons &&
@@ -579,6 +580,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         try
         {
             ApplyClientInfo(_clientService.ValidateClient(ClientPath, _realmInfo.Client));
+            if (!await EnforceRealmClientAsync())
+                throw new InvalidOperationException(_clientCheckStatus.Length > 0 ? _clientCheckStatus : "World of Warcraft doesn't match the realm's client.");
             await ClearCacheIfRealmAsksAsync();
             await PrepareIsolatedRuntimeAsync();
             var effectiveClient = _clientService.ValidateClient(EffectiveClientPath, _realmInfo.Client);
@@ -688,6 +691,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
     public void SetClientDirectory(string directoryPath)
     {
         if (_isManagingComponents || IsLaunching || IsGameRunning) return;
+        _clientCheck = ClientCheck.Unchecked;
         var client =
             _clientService.ValidateClient(directoryPath, _realmInfo?.Client);
 
@@ -1095,6 +1099,24 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             LaunchStatus = IsLoggedIn
                 ? "Install World of Warcraft with INSTALL WOW, or use LOCATE CLIENT if you already have 3.3.5a."
                 : "Locate a supported World of Warcraft 3.3.5a client.";
+            return;
+        }
+
+        if (_clientCheck == ClientCheck.Unchecked && IsLoggedIn)
+        {
+            LaunchStatus = "Checking World of Warcraft's files...";
+            return;
+        }
+
+        if (_clientCheck == ClientCheck.NotRealmClient)
+        {
+            LaunchStatus = "This client isn't " + RealmBranding.LauncherName + "'s yet: INSTALL WOW and pick its folder to update it.";
+            return;
+        }
+
+        if (_clientCheck == ClientCheck.NeedsUpdate)
+        {
+            LaunchStatus = _clientCheckStatus;
             return;
         }
 

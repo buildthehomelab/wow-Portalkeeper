@@ -33,7 +33,7 @@ public sealed partial class MainViewModel
 
     public HomeCard Card =>
         _isInstallingClient ? HomeCard.Installing
-        : !ClientValid ? HomeCard.NoClient
+        : !ClientValid || _clientCheck == ClientCheck.NotRealmClient ? HomeCard.NoClient
         : IsGameRunning || IsLaunching ? HomeCard.Playing
         : _isInstallingRequired ? HomeCard.Syncing
         : CanEnterRealm ? HomeCard.Ready
@@ -63,8 +63,9 @@ public sealed partial class MainViewModel
 
     public string CardTitle => Card switch
     {
-        HomeCard.Installing => "Downloading World of Warcraft",
-        HomeCard.NoClient => HasPendingClientInstall ? "Your install is paused" : "Install World of Warcraft",
+        HomeCard.Installing => _isRepairingClient ? "Updating World of Warcraft" : "Downloading World of Warcraft",
+        HomeCard.NoClient => HasPendingClientInstall ? "Your install is paused"
+            : ClientValid ? "Update your client to " + RealmBranding.LauncherName : "Install World of Warcraft",
         HomeCard.Syncing => "Updating realm files",
         HomeCard.Playing => "World of Warcraft is running",
         HomeCard.Ready => "Your game is up to date",
@@ -75,7 +76,9 @@ public sealed partial class MainViewModel
     {
         HomeCard.Installing => InstallStatus,
         HomeCard.NoClient => HasInstallStatus ? InstallStatus
-            : "Download the realm's client, or point Portalkeeper at a 3.3.5a client you already have.",
+            : ClientValid ? "INSTALL WOW and pick this client's folder to update it in place (only files that differ are downloaded, "
+                + "files the realm doesn't ship are deleted, addons and settings stay), or pick another folder for a fresh copy."
+            : "Download the realm's client. Pick a folder with a 3.3.5a client in it to use it as the base and download only what differs.",
         HomeCard.Ready => "Patches and addons are installed and verified.",
         _ => LaunchStatus
     };

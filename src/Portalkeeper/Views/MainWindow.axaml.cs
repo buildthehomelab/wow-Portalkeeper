@@ -111,6 +111,7 @@ public partial class MainWindow : Window
         if (DataContext is not MainViewModel viewModel)
             return;
 
+        viewModel.AllowClientUpdateRetry();
         await viewModel.RediscoverRealmConfigurationAsync();
     }
 
@@ -274,11 +275,14 @@ public partial class MainWindow : Window
 
     private async System.Threading.Tasks.Task PickInstallFolderAsync(MainViewModel viewModel)
     {
+        // Starts at the current client: picking it makes it the realm's client, downloading only what differs.
+        var current = viewModel.ClientValid ? await StorageProvider.TryGetFolderFromPathAsync(viewModel.ClientPath) : null;
         var folders = await StorageProvider.OpenFolderPickerAsync(
             new FolderPickerOpenOptions
             {
-                Title = "Choose where to install World of Warcraft",
-                AllowMultiple = false
+                Title = "Choose where to install World of Warcraft (a folder with WoW in it is updated in place)",
+                AllowMultiple = false,
+                SuggestedStartLocation = current
             });
         var folder = folders.FirstOrDefault();
         if (folder is null)

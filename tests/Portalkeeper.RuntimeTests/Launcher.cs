@@ -113,6 +113,10 @@ internal static partial class Program
                 RetiredPatchService.RemoveClientFiles(removeClient, [glueEntry], withoutGlue) == 1 && !File.Exists(gluePath));
             Check("nothing is put back", !File.Exists(gluePath) && RetiredPatchService.RemoveClientFiles(removeClient, [glueEntry], withoutGlue) == 0);
 
+            // The client is held to exactly what the realm ships; addons and settings are the player's.
+            ClientConformanceChecks(root, Check);
+            await ClientBaseDownloadChecks(root, Check);
+
             // INSTALL WOW brings the player's own addons and settings from the old client.
             var oldClient = Path.Combine(root, "import", "Old WoW");
             var newClient = Path.Combine(root, "import", "Evermore");
@@ -335,6 +339,172 @@ internal static partial class Program
                 break;
             default: throw new ArgumentException("Can't bencode " + value.GetType());
         }
+    }
+
+    /// <summary>
+    /// INSTALL WOW into a folder that already holds a client: only what fails the torrent's hashes comes
+    /// down (from a local web seed that counts what it serves), extras are gone, everything matches.
+    /// </summary>
+    private static async Task ClientBaseDownloadChecks(string root, Action<string, bool> check)
+    {
+        static byte[] Bytes(int seed, int length) { var b = new byte[length]; new Random(seed).NextBytes(b); return b; }
+        void Put(string path, byte[] bytes) { Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllBytes(path, bytes); }
+        var shipped = Path.Combine(root, "base-src", "Evermore");
+        Put(Path.Combine(shipped, "Wow.exe"), Bytes(21, 64 * 1024));
+        Put(Path.Combine(shipped, "Data", "common.MPQ"), Bytes(22, 256 * 1024));
+        Put(Path.Combine(shipped, "Data", "patch-C.mpq"), Bytes(23, 64 * 1024));
+        Put(Path.Combine(shipped, "Data", "enUS", "locale-enUS.MPQ"), Bytes(24, 128 * 1024));
+        var total = Directory.EnumerateFiles(shipped, "*", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length);
+
+        var port = 0;
+        using (var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0))
+        { probe.Start(); port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port; probe.Stop(); }
+        var listener = new System.Net.HttpListener();
+        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+        listener.Start();
+        long served = 0;
+        var serving = Task.Run(async () =>
+        {
+            while (listener.IsListening)
+            {
+                System.Net.HttpListenerContext context;
+                try { context = await listener.GetContextAsync(); } catch (Exception) { return; }
+                var relative = Uri.UnescapeDataString(context.Request.Url!.AbsolutePath.TrimStart('/'));
+                var file = Path.Combine(Path.GetDirectoryName(shipped)!, relative.Replace('/', Path.DirectorySeparatorChar));
+                if (!File.Exists(file)) { context.Response.StatusCode = 404; context.Response.Close(); continue; }
+                var bytes = File.ReadAllBytes(file);
+                long start = 0, end = bytes.Length - 1;
+                var range = context.Request.Headers["Range"];
+                if (range is not null && range.StartsWith("bytes="))
+                {
+                    var parts = range[6..].Split('-');
+                    start = long.Parse(parts[0]);
+                    if (parts[1].Length > 0) end = long.Parse(parts[1]);
+                    context.Response.StatusCode = 206;
+                    context.Response.Headers["Content-Range"] = $"bytes {start}-{end}/{bytes.Length}";
+                }
+                var length = (int)(end - start + 1);
+                Interlocked.Add(ref served, length);
+                context.Response.ContentLength64 = length;
+                try { await context.Response.OutputStream.WriteAsync(bytes.AsMemory((int)start, length)); context.Response.Close(); }
+                catch (Exception) { }
+            }
+        });
+        var torrent = FixtureTorrent(shipped, 16 * 1024, $"http://127.0.0.1:{port}/");
+
+        // Another client: same exe and locale, one changed piece in common.MPQ, patch-C replaced by a
+        // longer file, an MPQ the realm doesn't ship, and the player's addon.
+        var client = Path.Combine(root, "base", "WoW");
+        foreach (var file in Directory.EnumerateFiles(shipped, "*", SearchOption.AllDirectories))
+            Put(Path.Combine(client, Path.GetRelativePath(shipped, file)), File.ReadAllBytes(file));
+        var common = File.ReadAllBytes(Path.Combine(client, "Data", "common.MPQ"));
+        common[100_000] ^= 0xFF;
+        File.WriteAllBytes(Path.Combine(client, "Data", "common.MPQ"), common);
+        Put(Path.Combine(client, "Data", "patch-C.mpq"), Bytes(25, 70 * 1024));
+        Put(Path.Combine(client, "Data", "patch-Z.MPQ"), Bytes(26, 1000));
+        var addon = Path.Combine(client, "Interface", "AddOns", "Mine", "Mine.toc");
+        Put(addon, Bytes(27, 100));
+
+        var cache = Path.Combine(root, "base-torrent-cache");
+        var torrents = new TorrentService(cache);
+        try
+        {
+            ClientConformanceService.DeleteNonConforming(client, ClientConformanceService.Check(client, torrent, []));
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+            await torrents.DownloadAsync(torrent, client, keepSharing: false, null, timeout.Token);
+            check("installing over another client leaves exactly the realm's client",
+                ClientConformanceService.Check(client, torrent, []).Matches && File.Exists(addon)
+                && Directory.EnumerateFiles(shipped, "*", SearchOption.AllDirectories).All(f =>
+                    File.ReadAllBytes(f).AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(client, Path.GetRelativePath(shipped, f))))));
+            check($"only what differs is downloaded ({served:N0} of {total:N0} bytes)", served > 0 && served <= 64 * 1024 + 2 * 16 * 1024);
+        }
+        catch (Exception ex) { check("installing over another client: " + ex.Message, false); }
+        finally
+        {
+            await torrents.ShutdownAsync();
+            listener.Stop();
+            listener.Close();
+            await serving;
+        }
+    }
+
+    private static void ClientConformanceChecks(string root, Action<string, bool> check)
+    {
+        static byte[] Bytes(int seed, int length) { var b = new byte[length]; new Random(seed).NextBytes(b); return b; }
+        void Put(string path, byte[] bytes) { Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllBytes(path, bytes); }
+        var shipped = Path.Combine(root, "conform-src", "Evermore");
+        Put(Path.Combine(shipped, "Wow.exe"), Bytes(1, 40_000));
+        Put(Path.Combine(shipped, "Data", "common.MPQ"), Bytes(2, 60_000));
+        Put(Path.Combine(shipped, "Data", "patch-C.mpq"), Bytes(3, 30_000));
+        Put(Path.Combine(shipped, "Data", "enUS", "locale-enUS.MPQ"), Bytes(4, 20_000));
+        var torrent = FixtureTorrent(shipped, 16_384);
+
+        var client = Path.Combine(root, "conform", "WoW");
+        foreach (var file in Directory.EnumerateFiles(shipped, "*", SearchOption.AllDirectories))
+            Put(Path.Combine(client, Path.GetRelativePath(shipped, file)), File.ReadAllBytes(file));
+        var realmPatch = Path.Combine(client, "Data", "patch-K.MPQ");
+        var realmFiles = new[] { Path.Combine(client, "Data", "PATCH-K.MPQ") };
+        var players = new[]
+        {
+            Path.Combine(client, "Interface", "AddOns", "Mine", "Mine.toc"),
+            Path.Combine(client, "WTF", "Config.wtf"),
+            Path.Combine(client, "Data", "enUS", "realmlist.wtf"),
+            Path.Combine(client, "Screenshots", "WoWScrnShot.jpg"),
+            Path.Combine(client, "Cache", "WDB", "enUS", "creaturecache.wdb"),
+            Path.Combine(client, "Logs", "Sound.log"),
+            Path.Combine(client, ".portalkeeper", "client-install.json"),
+        };
+        foreach (var path in players) Put(path, Bytes(5, 100));
+        Put(realmPatch, Bytes(6, 5_000));
+
+        var result = ClientConformanceService.Check(client, torrent, realmFiles);
+        check("a client that is the realm's matches", result.Matches && result.Expected == 4);
+
+        var extras = new[]
+        {
+            Path.Combine(client, "Data", "patch-Z.MPQ"),
+            Path.Combine(client, "Data", "enUS", "patch-enUS-9.MPQ"),
+            Path.Combine(client, "d3d9.dll"),
+            Path.Combine(client, "Data", "Interface", "AddOns", "Hidden", "Hidden.toc"),
+        };
+        foreach (var path in extras) Put(path, Bytes(7, 900));
+        result = ClientConformanceService.Check(client, torrent, realmFiles);
+        check("files the realm didn't ship are found, wherever they are",
+            result.HasAllClientFiles && result.Extra.Count == extras.Length
+            && extras.All(e => result.Extra.Contains(RetiredPatchService.Normalize(Path.GetRelativePath(client, e)))));
+        check("realm patches, addons, settings, Cache, Logs and Screenshots aren't extras",
+            !result.Extra.Any(e => e.Contains("patch-K", StringComparison.OrdinalIgnoreCase) || e.StartsWith("Interface/") || e.StartsWith("WTF/")
+                || e.StartsWith("Cache/") || e.StartsWith("Logs/") || e.StartsWith("Screenshots/") || e.EndsWith("realmlist.wtf") || e.StartsWith(".portalkeeper/")));
+
+        var common = Path.Combine(client, "Data", "common.MPQ");
+        var patchC = Path.Combine(client, "Data", "patch-C.mpq");
+        var locale = Path.Combine(client, "Data", "enUS", "locale-enUS.MPQ");
+        File.WriteAllBytes(common, Bytes(8, 61_000));
+        File.WriteAllBytes(patchC, Bytes(9, 8_396));
+        File.Delete(locale);
+        result = ClientConformanceService.Check(client, torrent, realmFiles);
+        check("missing and resized client files are found", !result.HasAllClientFiles && result.Different.Count == 3);
+        check("only the longer file counts as too long", result.TooLong.SequenceEqual(new[] { "Data/common.MPQ" }));
+
+        var deleted = ClientConformanceService.DeleteNonConforming(client, result);
+        check("extras and too-long files are deleted", deleted == extras.Length + 1
+            && extras.All(e => !File.Exists(e)) && !File.Exists(common));
+        check("a shorter file stays for the download to finish", File.Exists(patchC));
+        check("the player's files and realm patches stay", players.Where(p => !p.Contains("Cache")).All(File.Exists) && File.Exists(realmPatch));
+        check("Cache is cleared after files change", !Directory.Exists(Path.Combine(client, "Cache")));
+
+        Put(Path.Combine(client, "Data", "patch-Y.MPQ"), Bytes(10, 10));
+        result = ClientConformanceService.Check(client, torrent, realmFiles);
+        ClientConformanceService.DeleteNonConforming(client, result with { TooLong = [] });
+        check("an extra is deleted while client files are still missing", !File.Exists(Path.Combine(client, "Data", "patch-Y.MPQ")) && File.Exists(patchC));
+
+        var stranger = Path.Combine(root, "conform", "Games");
+        Put(Path.Combine(stranger, "other-game.exe"), Bytes(11, 10));
+        check("a folder without WoW isn't treated as a client", ClientService.FindWowExecutable(stranger) is null
+            && ClientService.FindWowExecutable(client) is not null);
+
+        ClientConformanceService.SaveCachedTorrent(client, torrent);
+        check("the client torrent is kept for offline checks", ClientConformanceService.LoadCachedTorrent(client) is { } cached && cached.SequenceEqual(torrent));
     }
 
     private static async Task RetiredPatchChecks(string root, Action<string, bool> check)
