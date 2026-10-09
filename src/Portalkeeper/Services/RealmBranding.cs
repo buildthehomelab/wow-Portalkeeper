@@ -23,6 +23,12 @@ public static class RealmBranding
             ? test.TrimEnd('/') + "/"
             : "https://wow.vaultrona.com/api/launcher/");
 
+    /// <summary>The project's name, shown as the launcher's title and logo.</summary>
+    public const string LauncherName = "Evermore";
+
+    /// <summary>The realm's patch notes page.</summary>
+    public const string PatchNotesUrl = "https://wow.vaultrona.com/changelog.php";
+
     /// <summary>Where players register an account.</summary>
     public const string AccountSignupUrl = "https://wow.vaultrona.com/";
 

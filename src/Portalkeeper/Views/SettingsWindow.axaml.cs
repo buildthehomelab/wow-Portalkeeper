@@ -1,6 +1,8 @@
+using System.Linq;
 using Portalkeeper.ViewModels;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
 
 namespace Portalkeeper.Views;
 
@@ -24,6 +26,24 @@ public partial class SettingsWindow : Window
     {
         if (DataContext is MainViewModel vm) vm.ViewRelease();
     }
+    private async void LocateClient_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm) return;
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Locate World of Warcraft 3.3.5a",
+            AllowMultiple = false
+        });
+        if (folders.FirstOrDefault() is { } folder)
+            vm.SetClientDirectory(folder.Path.LocalPath);
+    }
+
+    private async void ManageAddons_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel vm)
+            await new ManageAddonsWindow { DataContext = vm }.ShowDialog(this);
+    }
+
     private async void LogOut_Click(object? sender, RoutedEventArgs e)
     {
         if (DataContext is MainViewModel vm)

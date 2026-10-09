@@ -526,6 +526,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
 
             _launchStatus = value;
             OnPropertyChanged();
+            NotifyHome();
         }
     }
 
@@ -854,6 +855,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(ArmoryAvailable));
         OnPropertyChanged(nameof(CanEnterRealm)); OnPropertyChanged(nameof(CanSwitchRealm));
         UpdateLaunchReadinessStatus();
+        NotifyHome();
     }
 
     // ---------------------------------------------------------

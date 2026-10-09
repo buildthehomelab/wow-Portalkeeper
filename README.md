@@ -9,6 +9,10 @@
 >
 > - Installed Windows builds update themselves: a new release downloads in the background, is checked against GitHub's published SHA-256, and installs when you're not playing (Settings can turn this off).
 >
+> - One clean launcher screen: realm status, a single status card (log in, install, downloading, up to date), settings and a big ENTER REALM button.
+>
+> The launcher's title font is [Cinzel](https://github.com/NDISCOVER/Cinzel) by Natanael Gama, under the SIL Open Font License 1.1 (`src/Portalkeeper/Assets/Fonts/Cinzel-OFL.txt`).
+>
 > The server side is the portal's launcher API ([wow-mod-azerothcore-portal](https://github.com/buildthehomelab/wow-mod-azerothcore-portal), `api/launcher/`). For development, `PORTALKEEPER_LAUNCHER_API` points a build at a test portal. `dotnet run --project tests/Portalkeeper.RuntimeTests -- launcher` runs the fork's offline checks.
 
 

@@ -15,6 +15,8 @@ This fork is built for one realm and changes three upstream rules on purpose:
 
 * **Installed Windows builds update themselves** (`PortalkeeperUpdateService`): a newer release's Setup exe is downloaded from this fork's releases, checked against GitHub's published SHA-256 for the asset (no checksum, no install), and run with `/VERYSILENT /RELAUNCH=1` after Portalkeeper closes, only when no game, install or download is running. The installer's `RelaunchAfterUpdate` entry reopens it. Portable zips and Linux keep the update notice.
 
+* **The main window is a single launcher scene** (`MainWindow.axaml`, `MainViewModel.Home.cs`): borderless window with its own top bar, logo, realm status, one status card, settings gear and ENTER REALM. Client, addon, sharing and account details live in Settings. A branded `Assets/Branding/background.jpg` (or `.png`) replaces the gradient background when present.
+
 Keep these changes out of upstream pull requests.
 
 ## Project Purpose

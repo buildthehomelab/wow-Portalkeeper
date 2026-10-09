@@ -2,10 +2,10 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
-    <Version>0.5.2</Version>
-    <AssemblyVersion>0.5.2.0</AssemblyVersion>
-    <FileVersion>0.5.2.0</FileVersion>
-    <InformationalVersion>0.5.2</InformationalVersion>
+    <Version>0.5.3</Version>
+    <AssemblyVersion>0.5.3.0</AssemblyVersion>
+    <FileVersion>0.5.3.0</FileVersion>
+    <InformationalVersion>0.5.3</InformationalVersion>
     <Product>Portalkeeper</Product>
     <Description>Cross-platform realm launcher and addon manager for World of Warcraft 3.3.5a.</Description>
     <Nullable>enable</Nullable>
@@ -35,6 +35,8 @@
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Cinzel (SIL Open Font License 1.1) is embedded under Assets/Fonts; its license ships in the install as Assets/Fonts/Cinzel-OFL.txt. -->
+    <None Include="Assets\Fonts\Cinzel-OFL.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <!-- The realm this build is made for; copied into the realm store on first run. -->
     <EmbeddedResource Include="Branding\azeroth.realm.conf" LogicalName="Portalkeeper.Branding.azeroth.realm.conf" />
   </ItemGroup>
