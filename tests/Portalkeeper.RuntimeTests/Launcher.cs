@@ -255,6 +255,29 @@ internal static partial class Program
             Check("a release without a checksum is refused", await ThrowsAsync(() => Updater(null).DownloadInstallerAsync("v9.9.9")));
             Check("a non-release tag is refused", await ThrowsAsync(() => Updater("sha256:" + payloadHash).DownloadInstallerAsync("main")));
             Check("this test build can't update itself in place", !PortalkeeperUpdateService.CanUpdateInPlace);
+
+            // Release checks ask the portal first; GitHub only when the portal can't say.
+            var portalUri = new Uri("https://portal.test/api/launcher/version.php");
+            var githubAsked = 0;
+            async Task<ReleaseCheckResult> ReleaseCheck(string portalBody, PortalkeeperSettings settings)
+            {
+                var releases = new PortalkeeperReleaseService(new HttpClient(new FakeHandler(request =>
+                {
+                    if (request.RequestUri == portalUri) return new StringContent(portalBody);
+                    githubAsked++;
+                    return new StringContent("""{"tag_name":"v2.0.0","draft":false,"prerelease":false}""");
+                })), () => DateTimeOffset.UtcNow, portalUri);
+                return await releases.CheckAsync(settings, "1.0.0", manual: false, _ => { });
+            }
+            var releaseSettings = new PortalkeeperSettings { LastPortalkeeperUpdateCheckUtc = DateTimeOffset.UtcNow };
+            var fromPortal = await ReleaseCheck("""{"tag":"v1.2.0","version":"1.2.0"}""", releaseSettings);
+            Check("the portal's release is used without asking GitHub", fromPortal.State == ReleaseCheckState.Available
+                && fromPortal.Tag == "v1.2.0" && githubAsked == 0 && releaseSettings.LatestPortalkeeperReleaseTag == "v1.2.0");
+            Check("the portal is asked again right away", (await ReleaseCheck("""{"tag":"v1.0.0"}""", releaseSettings)).State == ReleaseCheckState.UpToDate);
+            Check("a portal tag that isn't a stable release falls back without asking GitHub inside 6 hours",
+                (await ReleaseCheck("""{"tag":"main"}""", releaseSettings)).State == ReleaseCheckState.UpToDate && githubAsked == 0);
+            var fallback = await ReleaseCheck("not json", new PortalkeeperSettings());
+            Check("without a portal answer GitHub is asked", fallback.Tag == "v2.0.0" && githubAsked == 1);
         }
         catch (Exception ex)
         {
