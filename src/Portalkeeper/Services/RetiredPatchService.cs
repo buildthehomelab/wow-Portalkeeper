@@ -40,6 +40,8 @@ public static class RetiredPatchService
         public long Size { get; set; }
         /// <summary>Client-relative backup of the file this patch replaced when first installed, if any.</summary>
         public string? Original { get; set; }
+        /// <summary>RealmIdentity of the realm that installed it: cleanup only ever acts for that realm.</summary>
+        public string Realm { get; set; } = "";
     }
 
     private sealed class Ledger
@@ -83,7 +85,7 @@ public static class RetiredPatchService
     /// at a path keeps <paramref name="backup"/> (what it replaced) as the original to restore later;
     /// updates keep the first one, so a newer patch version never "restores" an older one of ours.
     /// </summary>
-    public static void RecordInstall(string root, string destination, string sha256, string? backup,
+    public static void RecordInstall(string root, string realm, string destination, string sha256, string? backup,
         IEnumerable<Entry> known)
     {
         if (sha256.Length == 0) return;
@@ -92,19 +94,20 @@ public static class RetiredPatchService
         var entry = entries.FirstOrDefault(e => SamePath(e.Path, relative));
         if (entry is null)
         {
-            entry = new Entry { Path = relative };
+            entry = new Entry { Path = relative, Realm = realm };
             if (backup is not null && !IsKnownPatch(backup, known))
                 entry.Original = Normalize(System.IO.Path.GetRelativePath(root, backup));
             entries.Add(entry);
         }
         entry.Path = relative;
+        entry.Realm = realm;
         entry.Sha256 = sha256.ToLowerInvariant();
         entry.Size = new FileInfo(destination).Length;
         Save(root, entries);
     }
 
     /// <summary>Adds installed, verified realm patches the ledger doesn't know yet (installed by an older launcher).</summary>
-    public static void RecordCurrent(string root, IEnumerable<(string Destination, string Sha256)> installed)
+    public static void RecordCurrent(string root, string realm, IEnumerable<(string Destination, string Sha256)> installed)
     {
         var entries = Load(root);
         var added = false;
@@ -112,11 +115,13 @@ public static class RetiredPatchService
         {
             if (sha256.Length == 0 || !File.Exists(destination)) continue;
             var relative = Normalize(System.IO.Path.GetRelativePath(root, destination));
-            if (entries.Any(e => SamePath(e.Path, relative) && e.Sha256.Equals(sha256, StringComparison.OrdinalIgnoreCase)))
+            if (entries.Any(e => SamePath(e.Path, relative) && e.Realm == realm
+                    && e.Sha256.Equals(sha256, StringComparison.OrdinalIgnoreCase)))
                 continue;
             var entry = entries.FirstOrDefault(e => SamePath(e.Path, relative));
             if (entry is null) entries.Add(entry = new Entry { Path = relative });
             entry.Path = relative;
+            entry.Realm = realm;
             entry.Sha256 = sha256.ToLowerInvariant();
             entry.Size = new FileInfo(destination).Length;
             added = true;
@@ -125,18 +130,20 @@ public static class RetiredPatchService
     }
 
     /// <summary>
-    /// Removes every patch in the ledger or in <paramref name="known"/> (patches the realm shipped
-    /// before this launcher kept a ledger) that isn't at one of <paramref name="currentPaths"/>, and
-    /// restores what it replaced. <paramref name="download"/> fetches one client-torrent file (URL,
-    /// local temp path) from the realm's web seed.
+    /// Removes every patch <paramref name="realm"/> installed (ledger) or shipped before launchers
+    /// kept one (<paramref name="known"/>; pass it only for that realm) that isn't at one of
+    /// <paramref name="currentPaths"/>, and restores what it replaced. <paramref name="download"/>
+    /// fetches one client-torrent file (URL, local temp path) from the realm's web seed;
+    /// <paramref name="beforeChange"/> runs once before the first file is touched (stop sharing).
     /// </summary>
-    public static async Task<RetiredPatchResult> CleanupAsync(string root, IEnumerable<string> currentPaths,
+    public static async Task<RetiredPatchResult> CleanupAsync(string root, string realm, IEnumerable<string> currentPaths,
         IEnumerable<Entry> known, byte[]? clientTorrent, Func<Uri, string, CancellationToken, Task>? download,
-        IProgress<string>? status, CancellationToken cancellationToken)
+        Func<Task>? beforeChange, IProgress<string>? status, CancellationToken cancellationToken)
     {
         var current = currentPaths.Select(Normalize).ToList();
         var ledger = Load(root);
-        var candidates = ledger.Concat(known.Where(k => !ledger.Any(e => SamePath(e.Path, k.Path) &&
+        var candidates = ledger.Where(e => e.Realm == realm)
+            .Concat(known.Where(k => !ledger.Any(e => SamePath(e.Path, k.Path) &&
                 e.Sha256.Equals(k.Sha256, StringComparison.OrdinalIgnoreCase))))
             .Where(e => !current.Any(c => SamePath(c, e.Path)))
             .ToList();
@@ -145,6 +152,7 @@ public static class RetiredPatchService
         var torrent = clientTorrent is null ? null : Torrent.Load(clientTorrent);
         int removed = 0, restored = 0, pending = 0;
         var ledgerChanged = false;
+        var stopped = false;
         foreach (var entry in candidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -190,6 +198,7 @@ public static class RetiredPatchService
                 }
             }
 
+            if (!stopped && beforeChange is not null) { await beforeChange(); stopped = true; }
             File.Delete(full);
             removed++;
             if (source is not null)
