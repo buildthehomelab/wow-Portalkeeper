@@ -263,13 +263,19 @@ public sealed partial class MainViewModel
     public bool IsSyncingRequired => _isInstallingRequired;
     private string _syncStatus = "";
 
+    // There's no patch list in this launcher, so Recommended patches install by themselves too:
+    // otherwise players would have no way to get them. Optional patches stay out.
+    private static bool InstallsAutomatically(PatchInfo patch) =>
+        patch.Definition.Requirement is ComponentRequirement.Required or ComponentRequirement.Recommended;
+
     private bool NeedsRequiredSync => IsLoggedIn && ClientValid && RealmConfigured && !IsIsolatedRealm && AddonsLoaded
-        && (!PatchesReady || !AddonsReady);
+        && (Patches.Any(p => InstallsAutomatically(p) && !p.IsValid) || !AddonsReady);
 
     /// <summary>
-    /// Installs or updates every Required patch and addon the realm lists, without asking: players
-    /// only ever see the optional addons. Runs after login, when the client is set and whenever the
-    /// realm configuration is refreshed (which is how a new patch version arrives).
+    /// Installs or updates every Required and Recommended patch and every Required addon the realm
+    /// lists, without asking: players only ever see the optional addons. Runs after login, when the
+    /// client is set and whenever the realm configuration is refreshed (which is how a new patch
+    /// version arrives).
     /// </summary>
     private async Task SyncRequiredAsync()
     {
@@ -286,7 +292,7 @@ public sealed partial class MainViewModel
         NotifyInstallChanged();
         try
         {
-            var patches = Patches.Where(p => p.Definition.Requirement == ComponentRequirement.Required && !p.IsValid)
+            var patches = Patches.Where(p => InstallsAutomatically(p) && !p.IsValid)
                 .Select(p => p.Definition).ToArray();
             foreach (var patch in patches)
             {

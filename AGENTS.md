@@ -11,7 +11,7 @@ This fork is built for one realm and changes three upstream rules on purpose:
   * a new install only goes into an empty folder (or one this install started, marked by `.portalkeeper/client-install.json`);
   * patches are still SHA-256 checked against realm.conf before they're installed, and fall back to HTTP when the torrent fails;
   * sharing pauses while the game runs and can be turned off in Settings.
-* **Required patches and addons install and update automatically**; players only manage optional addons.
+* **Required and Recommended patches and Required addons install and update automatically**; players only manage optional addons (there is no patch list, so Recommended patches would otherwise be unreachable).
 
 Keep these changes out of upstream pull requests.
 
