@@ -13,7 +13,11 @@ using System.Threading.Tasks;
 
 namespace Portalkeeper.Services;
 
-public sealed record LauncherSession(string Token, string AccountName, DateTimeOffset ExpiresAt);
+/// <param name="GamePassword">
+/// The game account's password, kept so the game's login screen can sign in with the launcher login
+/// (RealmLaunchService hands it to the client's login patch). Null for logins saved before 0.5.7.
+/// </param>
+public sealed record LauncherSession(string Token, string AccountName, DateTimeOffset ExpiresAt, string? GamePassword = null);
 
 public enum LauncherSessionState { Valid, Expired, Banned, Unreachable }
 
@@ -51,7 +55,7 @@ public sealed class LauncherAccountService
             throw await ErrorAsync(response, cancellationToken);
         var body = await response.Content.ReadFromJsonAsync<LoginBody>(cancellationToken)
             ?? throw new InvalidDataException("The login server sent an empty answer.");
-        return new LauncherSession(body.Token, body.Account.Name, DateTimeOffset.FromUnixTimeSeconds(body.ExpiresAt));
+        return new LauncherSession(body.Token, body.Account.Name, DateTimeOffset.FromUnixTimeSeconds(body.ExpiresAt), password);
     }
 
     /// <summary>
@@ -138,8 +142,9 @@ public sealed class LauncherAccountService
 }
 
 /// <summary>
-/// Keeps the launcher login between runs. On Windows the file is encrypted for the current Windows
-/// user (DPAPI); on Linux it's readable by the owner only. The game password is never stored.
+/// Keeps the launcher login between runs, including the game password the game's login screen signs
+/// in with. On Windows the file is encrypted for the current Windows user (DPAPI); on Linux it's
+/// readable by the owner only.
 /// </summary>
 public sealed class LauncherSessionStore
 {

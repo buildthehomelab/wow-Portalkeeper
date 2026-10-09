@@ -591,7 +591,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             if (unsatisfied.Length > 0) throw new InvalidOperationException("Required addons need attention: " + string.Join(", ", unsatisfied.Select(a => a.Definition.Name)));
             result = _realmLaunchService.PrepareAndLaunch(
                 EffectiveClientPath,
-                _realmInfo, ClientPath, AccountName);
+                _realmInfo, ClientPath, AccountName, GamePasswordForLaunch(_realmInfo));
 
             IsGameRunning = true;
             await PauseSharingForGameAsync();
@@ -612,6 +612,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         }
         finally
         {
+            if (result is not null)
+            {
+                try { RealmLaunchService.ForgetGamePassword(EffectiveClientPath); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
             var played = IsGameRunning;
             IsLaunching = false;
             IsGameRunning = false;

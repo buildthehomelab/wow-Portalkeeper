@@ -54,7 +54,8 @@ public sealed class RealmLaunchService
         string clientDirectory,
         RealmInfo realm,
         string? sourceClientDirectory = null,
-        string? accountName = null)
+        string? accountName = null,
+        string? gamePassword = null)
     {
         if (string.IsNullOrWhiteSpace(clientDirectory))
             throw new InvalidOperationException(
@@ -113,9 +114,18 @@ public sealed class RealmLaunchService
                 throw new InvalidOperationException("GameRealmName contains characters that cannot be written to Config.wtf.");
             settings.Add(("realmName", realm.GameRealmName));
         }
-        // The launcher login's account fills the game's login screen (the password is never written).
+        // The launcher login's account fills the game's login screen. The password is only passed on
+        // when the caller knows the realm's login patch reads it (see GamePasswordPrefix).
         if (!string.IsNullOrWhiteSpace(accountName) && IsConfigValue(accountName))
+        {
             settings.Add(("accountName", accountName));
+            if (!string.IsNullOrEmpty(gamePassword) && IsConfigValue(gamePassword))
+            {
+                settings.Add(("accountList", GamePasswordPrefix + gamePassword));
+                foreach (var agreement in AgreementSettings)
+                    settings.Add((agreement, "1"));
+            }
+        }
         if (settings.Count > 0)
             WriteConfigSettings(Path.Combine(fullClientDirectory, "WTF", "Config.wtf"), settings, fullClientDirectory);
         var process = LaunchWow(wowExecutable, fullClientDirectory, sourceClientDirectory, realm.Client.Executable);
@@ -264,24 +274,46 @@ public sealed class RealmLaunchService
         File.Copy(realmlistPath, backupPath, false);
     }
 
+    /// <summary>
+    /// Marks the game password in Config.wtf's accountList CVar (where the stock login screen keeps
+    /// Battle.net account names). The realm's login patch (AccountLogin.lua) takes a value with this
+    /// prefix, clears the CVar at once so the client never saves it back, and logs in with it.
+    /// </summary>
+    public const string GamePasswordPrefix = "portalkeeper:";
+
+    // The login screen's agreement pages; the password login waits behind them otherwise.
+    private static readonly string[] AgreementSettings =
+        { "readEULA", "readTOS", "readTerminationWithoutNotice", "readScanning", "readContest" };
+
+    private static readonly Regex GamePasswordLine = new(
+        @"^([ \t]*SET[ \t]+accountList[ \t]+)""" + Regex.Escape(GamePasswordPrefix) + @"[^\r\n]*",
+        RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.CultureInvariant);
+
+    /// <summary>Config.wtf text with a game password left by the launcher blanked out.</summary>
+    public static string WithoutGamePassword(string config) =>
+        GamePasswordLine.Replace(config, match => match.Groups[1].Value + "\"\"");
+
+    /// <summary>
+    /// Blanks a game password the launcher left in Config.wtf, for when the game exited without the
+    /// login patch taking it (a crash before the login screen, or the patch missing).
+    /// </summary>
+    public static void ForgetGamePassword(string clientDirectory)
+    {
+        var configPath = Path.Combine(Path.GetFullPath(clientDirectory), "WTF", "Config.wtf");
+        if (!File.Exists(configPath)) return;
+        var (current, encoding) = ReadConfig(configPath);
+        var updated = WithoutGamePassword(current);
+        if (!string.Equals(current, updated, StringComparison.Ordinal))
+            WriteConfig(configPath, updated, encoding);
+    }
+
     private static bool IsConfigValue(string value) =>
         !value.Any(char.IsControl) && !value.Contains('"') && !value.Contains('\\');
 
     private static void WriteConfigSettings(string configPath, IReadOnlyList<(string Name, string Value)> settings, string clientDirectory)
     {
         var exists = File.Exists(configPath);
-        var current = string.Empty;
-        Encoding encoding = new UTF8Encoding(false);
-        if (exists)
-        {
-            var bytes = File.ReadAllBytes(configPath);
-            using var reader = new StreamReader(new MemoryStream(bytes), Encoding.UTF8, true);
-            current = reader.ReadToEnd();
-            encoding = reader.CurrentEncoding;
-            if (encoding.CodePage == Encoding.UTF8.CodePage &&
-                !(bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF))
-                encoding = new UTF8Encoding(false);
-        }
+        var (current, encoding) = exists ? ReadConfig(configPath) : (string.Empty, new UTF8Encoding(false));
 
         var updated = current;
         foreach (var (name, value) in settings)
@@ -310,18 +342,37 @@ public sealed class RealmLaunchService
         var directory = Path.GetDirectoryName(configPath)
             ?? throw new InvalidOperationException("Unable to determine the WoW configuration directory.");
         Directory.CreateDirectory(directory);
-        if (exists)
+        // Handing over the password changes Config.wtf on every launch; only other changes are backed up.
+        if (exists && !string.Equals(WithoutGamePassword(current), WithoutGamePassword(updated), StringComparison.Ordinal))
         {
             var backupDirectory = Path.Combine(clientDirectory, ".portalkeeper", "backups", "config");
             Directory.CreateDirectory(backupDirectory);
             var backupPath = Path.Combine(backupDirectory, $"Config-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}.wtf");
-            File.Copy(configPath, backupPath, false);
+            // A password from an earlier launch the game didn't clear never goes into a backup.
+            File.WriteAllText(backupPath, WithoutGamePassword(current), encoding);
         }
 
+        WriteConfig(configPath, updated, encoding);
+    }
+
+    private static (string Text, Encoding Encoding) ReadConfig(string configPath)
+    {
+        var bytes = File.ReadAllBytes(configPath);
+        using var reader = new StreamReader(new MemoryStream(bytes), Encoding.UTF8, true);
+        var text = reader.ReadToEnd();
+        var encoding = reader.CurrentEncoding;
+        if (encoding.CodePage == Encoding.UTF8.CodePage &&
+            !(bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF))
+            encoding = new UTF8Encoding(false);
+        return (text, encoding);
+    }
+
+    private static void WriteConfig(string configPath, string text, Encoding encoding)
+    {
         var temporaryPath = configPath + ".portalkeeper.tmp";
         try
         {
-            File.WriteAllText(temporaryPath, updated, encoding);
+            File.WriteAllText(temporaryPath, text, encoding);
             File.Move(temporaryPath, configPath, true);
         }
         finally

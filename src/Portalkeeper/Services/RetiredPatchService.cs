@@ -214,6 +214,29 @@ public static class RetiredPatchService
         return new(removed, restored, pending);
     }
 
+    /// <summary>
+    /// Deletes each of <paramref name="files"/> that is still byte-for-byte the listed file and that
+    /// <paramref name="clientTorrent"/> no longer carries (while it does, the file is still the
+    /// client's). Nothing is restored in its place. Returns how many files were deleted.
+    /// </summary>
+    public static int RemoveClientFiles(string root, IEnumerable<Entry> files, byte[] clientTorrent)
+    {
+        var torrent = Torrent.Load(clientTorrent);
+        var removed = 0;
+        foreach (var entry in files)
+        {
+            if (torrent.Files.Any(f => SamePath(f.Path.ToString(), entry.Path))) continue;
+            var full = ManagedPath.Resolve(root, entry.Path);
+            if (!File.Exists(full) || new FileInfo(full).Length != entry.Size || !Sha256Matches(full, entry.Sha256))
+                continue;
+            ManagedRuntimeWriteGuard.Check(root, full);
+            File.Delete(full);
+            removed++;
+        }
+        if (removed > 0) PatchService.ClearClientCache(root);
+        return removed;
+    }
+
     private static bool IsKnownPatch(string path, IEnumerable<Entry> known)
     {
         var size = new FileInfo(path).Length;
