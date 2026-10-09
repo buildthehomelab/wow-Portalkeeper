@@ -4,7 +4,7 @@
 >
 > - The realm is built in. Players install it, log in with their game account and play; there's no realm file to place.
 > - **INSTALL WOW** downloads World of Warcraft 3.3.5a over BitTorrent. Players download from each other and from the realm's web seed, and players on the same home network are tried first.
-> - The realm's required patches and addons install and update by themselves, also over BitTorrent with an HTTP fallback. Players only choose optional addons.
+> - The realm's required and recommended patches and its required addons install and update by themselves, also over BitTorrent with an HTTP fallback. Players only choose optional addons.
 > - While Portalkeeper is open it shares finished downloads with other players: only copies that exactly match the realm's, never while the game runs, and with an upload limit (Settings → Account and sharing).
 >
 > The server side is the portal's launcher API ([wow-mod-azerothcore-portal](https://github.com/buildthehomelab/wow-mod-azerothcore-portal), `api/launcher/`). For development, `PORTALKEEPER_LAUNCHER_API` points a build at a test portal. `dotnet run --project tests/Portalkeeper.RuntimeTests -- launcher` runs the fork's offline checks.
