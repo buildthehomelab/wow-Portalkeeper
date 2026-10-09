@@ -212,6 +212,10 @@
                             <Button Content="CHECK FOR UPDATES" Click="CheckForUpdates_Click" IsEnabled="{Binding CanCheckForUpdates}" Margin="0,0,10,8" />
                             <Button Content="VIEW RELEASE" Click="ViewRelease_Click" IsVisible="{Binding IsUpdateAvailable}" Margin="0,0,0,8" />
                         </WrapPanel>
+                        <CheckBox Content="Install Portalkeeper updates automatically"
+                                  IsChecked="{Binding AutoUpdatePortalkeeper, Mode=TwoWay}"
+                                  IsVisible="{Binding CanUpdateInPlace}"
+                                  Foreground="#F2E7D0" />
                     </StackPanel>
                 </Border>
 

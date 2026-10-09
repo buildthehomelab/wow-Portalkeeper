@@ -248,6 +248,11 @@ public partial class MainWindow : Window
             viewModel.CancelClientInstall();
     }
 
+    private void UpdateNow_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel vm && !vm.TryApplySelfUpdate(manual: true))
+            vm.ShowUpdateWaitMessage();
+    }
     private void ViewRelease_Click(object? sender, RoutedEventArgs e)
     {
         if (DataContext is MainViewModel vm) vm.ViewRelease();

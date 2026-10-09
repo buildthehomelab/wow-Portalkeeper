@@ -9,7 +9,7 @@ namespace Portalkeeper.Services;
 public enum ReleaseCheckState { NotChecked, UpToDate, Available, Failed }
 public sealed record ReleaseCheckResult(ReleaseCheckState State, string Message, string? Tag = null, string? Version = null);
 
-// Advisory release information only; this service never downloads application assets.
+// Release information. Downloading and installing a release is PortalkeeperUpdateService's job.
 public sealed class PortalkeeperReleaseService
 {
     public const string LatestReleaseEndpoint = "https://api.github.com/repos/buildthehomelab/wow-Portalkeeper/releases/latest";
@@ -22,7 +22,7 @@ public sealed class PortalkeeperReleaseService
     { _http = http ?? SharedHttp; _now = now ?? (() => DateTimeOffset.UtcNow); }
 
     public static bool IsCheckDue(DateTimeOffset? last, DateTimeOffset now) =>
-        last is null || now < last.Value || now - last.Value >= TimeSpan.FromHours(24);
+        last is null || now < last.Value || now - last.Value >= TimeSpan.FromHours(6);
 
     public static bool TryStableTag(string? tag, out string version)
     {

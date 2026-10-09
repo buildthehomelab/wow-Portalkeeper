@@ -129,6 +129,31 @@ internal static partial class Program
             Check("a changed file forces a re-hash and is not shared", !await rehash.ShareAsync(torrent, client));
             Check("the changed file is left untouched", File.ReadAllBytes(mpq).SequenceEqual(tampered));
             await rehash.ShutdownAsync();
+
+            // Self-update: the installer is only kept when it matches GitHub's published SHA-256.
+            var payload = RandomNumberGenerator.GetBytes(50_000);
+            var payloadHash = Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant();
+            string ReleaseJson(string? digest) => "{\"draft\":false,\"prerelease\":false,\"assets\":[{\"name\":\"Portalkeeper-Setup-9.9.9.exe\",\"size\":"
+                + payload.Length + (digest is null ? "" : ",\"digest\":\"" + digest + "\"") + "}]}";
+            var downloads = 0;
+            byte[] served = payload;
+            var updates = Path.Combine(root, "updates");
+            PortalkeeperUpdateService Updater(string? digest) => new(
+                new HttpClient(new FakeHandler(_ => new System.Net.Http.StringContent(ReleaseJson(digest)))),
+                new HttpClient(new FakeHandler(_ => { downloads++; return new System.Net.Http.ByteArrayContent(served); })),
+                updates);
+            var installer = await Updater("sha256:" + payloadHash).DownloadInstallerAsync("v9.9.9");
+            Check("verified installer is kept", File.ReadAllBytes(installer).SequenceEqual(payload) && Path.GetFileName(installer) == "Portalkeeper-Setup-9.9.9.exe");
+            await Updater("sha256:" + payloadHash).DownloadInstallerAsync("v9.9.9");
+            Check("a verified installer isn't downloaded twice", downloads == 1);
+            File.Delete(installer);
+            served = (byte[])payload.Clone();
+            served[10] ^= 0xFF;
+            Check("a tampered installer is refused", await ThrowsAsync(() => Updater("sha256:" + payloadHash).DownloadInstallerAsync("v9.9.9")));
+            Check("nothing is left behind after a refused download", !Directory.EnumerateFiles(updates).Any());
+            Check("a release without a checksum is refused", await ThrowsAsync(() => Updater(null).DownloadInstallerAsync("v9.9.9")));
+            Check("a non-release tag is refused", await ThrowsAsync(() => Updater("sha256:" + payloadHash).DownloadInstallerAsync("main")));
+            Check("this test build can't update itself in place", !PortalkeeperUpdateService.CanUpdateInPlace);
         }
         catch (Exception ex)
         {
@@ -142,6 +167,18 @@ internal static partial class Program
 
         Console.WriteLine(failures == 0 ? "Launcher: all checks passed." : $"Launcher: {failures} check(s) failed.");
         return failures == 0 ? 0 : 1;
+    }
+
+    private static async Task<bool> ThrowsAsync(Func<Task> action)
+    {
+        try { await action(); return false; }
+        catch (Exception) { return true; }
+    }
+
+    private sealed class FakeHandler(Func<HttpRequestMessage, HttpContent> respond) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = respond(request) });
     }
 
     /// <summary>A private multi-file torrent of <paramref name="folder"/>, named after it.</summary>

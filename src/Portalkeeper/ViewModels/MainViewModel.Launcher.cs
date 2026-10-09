@@ -42,6 +42,7 @@ public sealed partial class MainViewModel
         _patchService.Downloader = DownloadPatchViaTorrentAsync;
         _ = RestoreLoginAsync();
         _ = RunSharingStatusLoopAsync();
+        StartSelfUpdates();
     }
 
     // ---------------------------------------------------------
