@@ -331,8 +331,77 @@ public sealed partial class MainViewModel
     private async Task SyncRequiredAndShareAsync()
     {
         await ClearCacheIfRealmAsksAsync();
+        await CleanupRetiredPatchesAsync();
         await SyncRequiredAsync();
+        RecordInstalledPatches();
         await RefreshSharingAsync();
+    }
+
+    // ---------------------------------------------------------
+    // Patches the realm no longer lists
+    // ---------------------------------------------------------
+
+    private bool _isCleaningPatches;
+    private static readonly System.Net.Http.HttpClient ClientFileHttp = new() { Timeout = System.Threading.Timeout.InfiniteTimeSpan };
+
+    /// <summary>
+    /// Takes out realm patches realm.conf dropped and restores the client files they replaced (see
+    /// RetiredPatchService). Needs the client torrent to know which files are the client's, so it waits
+    /// for a login and skips the run when the torrent can't be fetched (other than "this realm has none").
+    /// </summary>
+    private async Task CleanupRetiredPatchesAsync()
+    {
+        var session = _session;
+        var realm = _realmInfo;
+        if (session is null || realm is null || !ClientValid || !RealmConfigured || IsIsolatedRealm || IsGameRunning
+            || IsLaunching || _isInstallingClient || _isManagingComponents || _isCleaningPatches)
+            return;
+        _isCleaningPatches = true;
+        try
+        {
+            byte[]? torrent;
+            try { torrent = _clientTorrent ??= await _accountService.GetClientTorrentAsync(session); }
+            catch (LauncherApiException ex) when (ex.Status == HttpStatusCode.NotFound) { torrent = null; }
+            catch (Exception) { return; } // offline or the portal is down: try again next sync
+
+            var current = realm.Patches.Where(p => p.InstallMode == PatchInstallMode.File)
+                .Select(p => Path.Combine(p.InstallDirectory, p.FileName));
+            var status = new Progress<string>(SetSyncStatus);
+            var result = await RetiredPatchService.CleanupAsync(EffectiveClientPath, current, RealmBranding.RetiredPatches,
+                torrent, DownloadClientFileAsync, status, CancellationToken.None);
+            if (result.Removed > 0) RefreshPatches();
+            _syncStatus = result.Pending > 0
+                ? "Couldn't restore some client files the realm's old patches replaced; CHECK AGAIN retries."
+                : "";
+            UpdateLaunchReadinessStatus();
+        }
+        catch (Exception ex)
+        {
+            _syncStatus = UserErrorService.Format(ex, "Couldn't remove the realm's old patches; CHECK AGAIN retries");
+            UpdateLaunchReadinessStatus();
+        }
+        finally { _isCleaningPatches = false; }
+    }
+
+    private static async Task DownloadClientFileAsync(Uri url, string path, CancellationToken cancellationToken)
+    {
+        using var response = await ClientFileHttp.GetAsync(url, System.Net.Http.HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        await using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        await response.Content.CopyToAsync(output, cancellationToken);
+    }
+
+    /// <summary>Notes the realm patches installed now, so they can be taken out cleanly later.</summary>
+    private void RecordInstalledPatches()
+    {
+        if (!ClientValid || IsIsolatedRealm) return;
+        try
+        {
+            RetiredPatchService.RecordCurrent(EffectiveClientPath, Patches
+                .Where(p => p.IsValid && p.Definition.InstallMode == PatchInstallMode.File && p.Destination.Length > 0)
+                .Select(p => (p.Destination, p.Definition.Sha256)));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException) { }
     }
 
     // ---------------------------------------------------------

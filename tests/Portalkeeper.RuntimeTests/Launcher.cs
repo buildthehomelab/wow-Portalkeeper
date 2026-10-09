@@ -42,6 +42,9 @@ internal static partial class Program
             Check("other hosts are not torrent patches", RealmBranding.HostedPatchFileName("https://example.com/realm/patch-P.MPQ") is null);
             Check("traversal is not a torrent patch", RealmBranding.HostedPatchFileName(RealmBranding.PatchBaseUrl + "..") is null);
 
+            // Retired realm patches: removed only while still ours, the client file they replaced restored.
+            await RetiredPatchChecks(root, Check);
+
             // Saved login.
             var sessionPath = Path.Combine(root, "session", "launcher-session.dat");
             var sessions = new LauncherSessionStore(sessionPath);
@@ -183,7 +186,7 @@ internal static partial class Program
     }
 
     /// <summary>A private multi-file torrent of <paramref name="folder"/>, named after it.</summary>
-    private static byte[] FixtureTorrent(string folder, int pieceLength)
+    private static byte[] FixtureTorrent(string folder, int pieceLength, string? webSeed = null)
     {
         var files = Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories)
             .OrderBy(p => Path.GetRelativePath(folder, p).Replace('\\', '/'), StringComparer.Ordinal).ToArray();
@@ -213,6 +216,7 @@ internal static partial class Program
             ["announce"] = "http://127.0.0.1:9/announce",
             ["info"] = info,
         };
+        if (webSeed is not null) torrent["url-list"] = new List<object> { webSeed };
         using var output = new MemoryStream();
         Bencode(output, torrent);
         return output.ToArray();
@@ -234,5 +238,111 @@ internal static partial class Program
                 break;
             default: throw new ArgumentException("Can't bencode " + value.GetType());
         }
+    }
+
+    private static async Task RetiredPatchChecks(string root, Action<string, bool> check)
+    {
+        static byte[] Bytes(int seed, int length) { var b = new byte[length]; new Random(seed).NextBytes(b); return b; }
+        var clientSrc = Path.Combine(root, "retired-src", "Evermore");
+        Directory.CreateDirectory(Path.Combine(clientSrc, "Data"));
+        var reforgedC = Bytes(1, 300_000);
+        File.WriteAllBytes(Path.Combine(clientSrc, "Data", "patch-B.mpq"), Bytes(2, 70_001));
+        File.WriteAllBytes(Path.Combine(clientSrc, "Data", "patch-C.mpq"), reforgedC);
+        File.WriteAllBytes(Path.Combine(clientSrc, "Data", "patch-D.mpq"), Bytes(3, 50_003));
+        var torrent = FixtureTorrent(clientSrc, 32_768, "https://seed.example/api/launcher/seed.php/key/");
+
+        var ourC = Bytes(10, 8_396);
+        var ourF = Bytes(11, 9_000);
+        var ourK = Bytes(12, 7_000);
+        string Hash(byte[] b) => Convert.ToHexString(SHA256.HashData(b)).ToLowerInvariant();
+        var known = new List<RetiredPatchService.Entry>
+        {
+            new() { Path = "Data/patch-C.MPQ", Size = ourC.Length, Sha256 = Hash(ourC) },
+            new() { Path = "Data/Patch-F.MPQ", Size = ourF.Length, Sha256 = Hash(ourF) },
+        };
+        string NewClient(string name)
+        {
+            var c = Path.Combine(root, "retired-" + name);
+            Directory.CreateDirectory(Path.Combine(c, "Data"));
+            foreach (var f in Directory.GetFiles(Path.Combine(clientSrc, "Data")))
+                File.Copy(f, Path.Combine(c, "Data", Path.GetFileName(f)));
+            // Our old patch replaced the client's patch-C (one file on Windows; a second name elsewhere).
+            File.Delete(Path.Combine(c, "Data", "patch-C.mpq"));
+            File.WriteAllBytes(Path.Combine(c, "Data", "patch-C.MPQ"), ourC);
+            File.WriteAllBytes(Path.Combine(c, "Data", "Patch-F.MPQ"), ourF);
+            return c;
+        }
+        var current = new[] { "Data/patch-K.MPQ" };
+
+        // 1. The original comes back from PatchService's backup once it passes the torrent's hashes.
+        var a = NewClient("backup");
+        var junk = Path.Combine(a, ".portalkeeper", "backups", "patches", "1", "patch-C.mpq");
+        Directory.CreateDirectory(Path.GetDirectoryName(junk)!);
+        File.WriteAllBytes(junk, Bytes(99, reforgedC.Length)); // same size, wrong content
+        var good = Path.Combine(a, ".portalkeeper", "backups", "patches", "2", "patch-C.mpq");
+        Directory.CreateDirectory(Path.GetDirectoryName(good)!);
+        File.WriteAllBytes(good, reforgedC);
+        var downloads = 0;
+        var result = await RetiredPatchService.CleanupAsync(a, current, known, torrent,
+            (_, _, _) => { downloads++; return Task.CompletedTask; }, null, CancellationToken.None);
+        check("retired patch removed and original restored from a verified backup",
+            result is { Removed: 2, Restored: 1, Pending: 0 } && downloads == 0
+            && File.ReadAllBytes(Path.Combine(a, "Data", "patch-C.mpq")).AsSpan().SequenceEqual(reforgedC));
+        check("a retired patch the client torrent doesn't have is just removed", !File.Exists(Path.Combine(a, "Data", "Patch-F.MPQ")));
+        check("a backup failing the torrent's hashes is not restored", File.Exists(junk));
+        check("a second run finds nothing to do",
+            await RetiredPatchService.CleanupAsync(a, current, known, torrent, null, null, CancellationToken.None) is { Removed: 0, Pending: 0 });
+
+        // 2. No backup: the file comes from the web seed, at the BEP 19 URL, and is verified.
+        var b = NewClient("download");
+        Uri? asked = null;
+        result = await RetiredPatchService.CleanupAsync(b, current, known, torrent,
+            (url, path, _) => { asked = url; File.WriteAllBytes(path, reforgedC); return Task.CompletedTask; }, null, CancellationToken.None);
+        check("without a backup the original is downloaded from the web seed",
+            result is { Restored: 1, Pending: 0 } && File.ReadAllBytes(Path.Combine(b, "Data", "patch-C.mpq")).AsSpan().SequenceEqual(reforgedC));
+        check("web seed URL is seed + torrent name + path",
+            asked?.ToString() == "https://seed.example/api/launcher/seed.php/key/Evermore/Data/patch-C.mpq");
+
+        // 3. A bad download leaves our patch where it is (a stale patch beats a hole) and retries later.
+        var c = NewClient("bad");
+        result = await RetiredPatchService.CleanupAsync(c, current, known, torrent,
+            (_, path, _) => { File.WriteAllBytes(path, Bytes(5, reforgedC.Length)); return Task.CompletedTask; }, null, CancellationToken.None);
+        check("a download failing the torrent's hashes keeps our patch and reports it pending",
+            result.Pending == 1 && File.ReadAllBytes(Path.Combine(c, "Data", "patch-C.MPQ")).AsSpan().SequenceEqual(ourC)
+            && !Directory.EnumerateFiles(Path.Combine(c, ".portalkeeper", "downloads")).Any());
+
+        // 4. Files that aren't byte-for-byte ours, and patches realm.conf still lists, are left alone.
+        var d = NewClient("foreign");
+        File.WriteAllBytes(Path.Combine(d, "Data", "Patch-F.MPQ"), Bytes(6, ourF.Length));
+        result = await RetiredPatchService.CleanupAsync(d, new[] { "Data/patch-K.MPQ", "Data/patch-C.MPQ" }, known, torrent, null, null, CancellationToken.None);
+        check("a same-size file that isn't ours stays", File.Exists(Path.Combine(d, "Data", "Patch-F.MPQ")));
+        check("a patch realm.conf still lists stays", File.Exists(Path.Combine(d, "Data", "patch-C.MPQ")) && result.Removed == 0);
+
+        // 5. Ledger: the first install's backup is the original; a later update keeps it.
+        var e = NewClient("ledger");
+        var k = Path.Combine(e, "Data", "patch-K.MPQ");
+        var mine = Path.Combine(e, "Data", "mine.bak");
+        File.WriteAllBytes(mine, Bytes(7, 1234)); // a player's own file our patch-K replaced
+        File.WriteAllBytes(k, ourK);
+        RetiredPatchService.RecordInstall(e, k, Hash(ourK), mine, known);
+        var ourK2 = Bytes(13, 7_100);
+        var k2Backup = Path.Combine(e, "Data", "k1.bak");
+        File.WriteAllBytes(k2Backup, ourK);
+        File.WriteAllBytes(k, ourK2);
+        RetiredPatchService.RecordInstall(e, k, Hash(ourK2), k2Backup, known);
+        var ledger = RetiredPatchService.Load(e);
+        check("ledger keeps the first install's original across updates",
+            ledger.Count == 1 && ledger[0].Original == "Data/mine.bak" && ledger[0].Sha256 == Hash(ourK2));
+        var backupOfKnown = Path.Combine(e, "Data", "c.bak");
+        File.WriteAllBytes(backupOfKnown, ourC);
+        File.WriteAllBytes(Path.Combine(e, "Data", "patch-W.MPQ"), ourK);
+        RetiredPatchService.RecordInstall(e, Path.Combine(e, "Data", "patch-W.MPQ"), Hash(ourK), backupOfKnown, known);
+        check("an old realm patch is never recorded as the original",
+            RetiredPatchService.Load(e).Single(x => x.Path == "Data/patch-W.MPQ").Original is null);
+        result = await RetiredPatchService.CleanupAsync(e, new[] { "Data/patch-W.MPQ" }, known, torrent,
+            (_, path, _) => { File.WriteAllBytes(path, reforgedC); return Task.CompletedTask; }, null, CancellationToken.None);
+        check("a dropped ledger patch is removed and its original put back",
+            File.ReadAllBytes(k).AsSpan().SequenceEqual(Bytes(7, 1234)) && !File.Exists(mine)
+            && RetiredPatchService.Load(e).All(x => x.Path != "Data/patch-K.MPQ"));
     }
 }
