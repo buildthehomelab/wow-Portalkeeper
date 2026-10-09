@@ -330,8 +330,40 @@ public sealed partial class MainViewModel
 
     private async Task SyncRequiredAndShareAsync()
     {
+        await ClearCacheIfRealmAsksAsync();
         await SyncRequiredAsync();
         await RefreshSharingAsync();
+    }
+
+    // ---------------------------------------------------------
+    // Clearing the client's Cache when the realm asks
+    // ---------------------------------------------------------
+
+    private static readonly System.Net.Http.HttpClient CacheVersionHttp = new() { Timeout = TimeSpan.FromSeconds(5) };
+
+    /// <summary>
+    /// Patch changes clear Cache themselves (PatchService). This covers server-side changes the client
+    /// also caches (items, spells, quests): when the realm's cache-version.txt changes, Cache is cleared
+    /// once for this client. Runs after realm refreshes and right before launching.
+    /// </summary>
+    private async Task ClearCacheIfRealmAsksAsync()
+    {
+        if (!ClientValid || IsGameRunning || IsIsolatedRealm) return;
+        string version;
+        try
+        {
+            using var response = await CacheVersionHttp.GetAsync(RealmBranding.CacheVersionUrl);
+            if (!response.IsSuccessStatusCode) return; // no file: the realm doesn't use this
+            version = (await response.Content.ReadAsStringAsync()).Trim();
+        }
+        catch (Exception) { return; }
+        if (version.Length is 0 or > 64) return;
+
+        var client = Path.GetFullPath(ClientPath);
+        if (_savedSettings.ClientCacheVersions.TryGetValue(client, out var seen) && seen == version) return;
+        PatchService.ClearClientCache(client);
+        _savedSettings.ClientCacheVersions[client] = version;
+        try { SaveSettings(); } catch (Exception) { }
     }
 
     // ---------------------------------------------------------
