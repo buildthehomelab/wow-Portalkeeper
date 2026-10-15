@@ -596,6 +596,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             var unsatisfied = currentAddons.Where(a => a.Definition.Required && (!a.IsInstalled || a.IsUpdateAvailable)).ToArray();
             if (unsatisfied.Length > 0) throw new InvalidOperationException("Required addons need attention: " + string.Join(", ", unsatisfied.Select(a => a.Definition.Name)));
             PrepareCombatLogsForLaunch();
+            // PrepareAndLaunch checks the client's program files again; hashing them here, off the UI
+            // thread, leaves it only remembered hashes to compare.
+            if (RealmBranding.IsBuiltIn(_realmInfo) && !IsIsolatedRealm
+                && ClientService.FindWowExecutable(EffectiveClientPath, _realmInfo.Client.Executable) is { } launchExecutable)
+                await Task.Run(() => ClientConformanceService.VerifyBinaries(launchExecutable));
             result = _realmLaunchService.PrepareAndLaunch(
                 EffectiveClientPath,
                 _realmInfo, ClientPath, AccountName, GamePasswordForLaunch(_realmInfo));
@@ -1166,7 +1171,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             LaunchStatus = "Required patches need attention: " + string.Join(", ", Patches.Where(p => p.Definition.Requirement == ComponentRequirement.Required && !p.IsValid).Select(p => p.Definition.Name + " (" + p.Status + ")"));
             return;
         }
-        LaunchStatus = "Ready to enter realm.";
+        // The client is playable, but the launcher refused what the realm's client torrent asked for.
+        LaunchStatus = _clientCheck == ClientCheck.Ok && _clientCheckStatus.Length > 0
+            ? "Ready to enter realm. " + _clientCheckStatus
+            : "Ready to enter realm.";
     }
 
     // ---------------------------------------------------------

@@ -117,6 +117,8 @@ internal static partial class Program
 
             // The client is held to exactly what the realm ships; addons and settings are the player's.
             ClientConformanceChecks(root, Check);
+            PatchBackupChecks(root, Check);
+            EnforceChecks(root, Check);
             await ClientBaseDownloadChecks(root, Check);
 
             // INSTALL WOW brings the player's own addons and settings from the old client.
@@ -320,6 +322,12 @@ internal static partial class Program
             Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = respond(request) });
     }
 
+    /// <summary>The program files in the top of a fixture client, pinned the way RealmBranding.ClientBinaries pins the realm's.</summary>
+    private static IReadOnlyList<ClientBinary> BinaryPins(string folder) =>
+        Directory.EnumerateFiles(folder).Where(f => f.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+            .Select(f => new ClientBinary(Path.GetFileName(f), new FileInfo(f).Length, Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(f)))))
+            .ToList();
+
     /// <summary>A private multi-file torrent of <paramref name="folder"/>, named after it.</summary>
     private static byte[] FixtureTorrent(string folder, int pieceLength, string? webSeed = null)
     {
@@ -425,6 +433,7 @@ internal static partial class Program
             }
         });
         var torrent = FixtureTorrent(shipped, 16 * 1024, $"http://127.0.0.1:{port}/");
+        var pins = BinaryPins(shipped);
 
         // Another client: same exe and locale, one changed piece in common.MPQ, patch-C replaced by a
         // longer file, an MPQ the realm doesn't ship, and the player's addon.
@@ -443,13 +452,13 @@ internal static partial class Program
         var torrents = new TorrentService(cache);
         try
         {
-            ClientConformanceService.DeleteNonConforming(client, ClientConformanceService.Check(client, torrent, []));
+            ClientConformanceService.RemoveNonConforming(client, ClientConformanceService.Check(client, torrent, [], pins));
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
             var webSeeds = 0;
             await torrents.DownloadAsync(torrent, client, keepSharing: false,
                 new SyncProgress<TorrentProgress>(p => webSeeds = Math.Max(webSeeds, p.WebSeeds)), timeout.Token);
             check("installing over another client leaves exactly the realm's client",
-                ClientConformanceService.Check(client, torrent, []).Matches && File.Exists(addon)
+                ClientConformanceService.Check(client, torrent, [], pins).Matches && File.Exists(addon)
                 && Directory.EnumerateFiles(shipped, "*", SearchOption.AllDirectories).All(f =>
                     File.ReadAllBytes(f).AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(client, Path.GetRelativePath(shipped, f))))));
             check($"only what differs is downloaded ({served:N0} of {total:N0} bytes)", served > 0 && served <= 64 * 1024 + 2 * 16 * 1024);
@@ -480,6 +489,7 @@ internal static partial class Program
         Put(Path.Combine(shipped, "Data", "patch-C.mpq"), Bytes(3, 30_000));
         Put(Path.Combine(shipped, "Data", "enUS", "locale-enUS.MPQ"), Bytes(4, 20_000));
         var torrent = FixtureTorrent(shipped, 16_384);
+        var pins = BinaryPins(shipped);
 
         var client = Path.Combine(root, "conform", "WoW");
         foreach (var file in Directory.EnumerateFiles(shipped, "*", SearchOption.AllDirectories))
@@ -499,7 +509,7 @@ internal static partial class Program
         foreach (var path in players) Put(path, Bytes(5, 100));
         Put(realmPatch, Bytes(6, 5_000));
 
-        var result = ClientConformanceService.Check(client, torrent, realmFiles);
+        var result = ClientConformanceService.Check(client, torrent, realmFiles, pins);
         check("a client that is the realm's matches", result.Matches && result.Expected == 4);
 
         var extras = new[]
@@ -510,7 +520,7 @@ internal static partial class Program
             Path.Combine(client, "Data", "Interface", "AddOns", "Hidden", "Hidden.toc"),
         };
         foreach (var path in extras) Put(path, Bytes(7, 900));
-        result = ClientConformanceService.Check(client, torrent, realmFiles);
+        result = ClientConformanceService.Check(client, torrent, realmFiles, pins);
         check("files the realm didn't ship are found, wherever they are",
             result.HasAllClientFiles && result.Extra.Count == extras.Length
             && extras.All(e => result.Extra.Contains(RetiredPatchService.Normalize(Path.GetRelativePath(client, e)))));
@@ -524,21 +534,119 @@ internal static partial class Program
         File.WriteAllBytes(common, Bytes(8, 61_000));
         File.WriteAllBytes(patchC, Bytes(9, 8_396));
         File.Delete(locale);
-        result = ClientConformanceService.Check(client, torrent, realmFiles);
+        result = ClientConformanceService.Check(client, torrent, realmFiles, pins);
         check("missing and resized client files are found", !result.HasAllClientFiles && result.Different.Count == 3);
         check("only the longer file counts as too long", result.TooLong.SequenceEqual(new[] { "Data/common.MPQ" }));
 
-        var deleted = ClientConformanceService.DeleteNonConforming(client, result);
-        check("extras and too-long files are deleted", deleted == extras.Length + 1
-            && extras.All(e => !File.Exists(e)) && !File.Exists(common));
+        var removedDir = Path.Combine(client, ".portalkeeper", "removed");
+        var moved = ClientConformanceService.RemoveNonConforming(client, result);
+        var batch = Directory.GetDirectories(removedDir).Single();
+        check("extras are put aside, not deleted", moved == extras.Length + 1
+            && extras.All(e => !File.Exists(e) && File.Exists(Path.Combine(batch, Path.GetRelativePath(client, e)))));
+        check("a too-long client file is deleted, not kept (it's downloaded again)",
+            !File.Exists(common) && !File.Exists(Path.Combine(batch, "Data", "common.MPQ")));
         check("a shorter file stays for the download to finish", File.Exists(patchC));
         check("the player's files and realm patches stay", players.Where(p => !p.Contains("Cache")).All(File.Exists) && File.Exists(realmPatch));
         check("Cache is cleared after files change", !Directory.Exists(Path.Combine(client, "Cache")));
 
         Put(Path.Combine(client, "Data", "patch-Y.MPQ"), Bytes(10, 10));
-        result = ClientConformanceService.Check(client, torrent, realmFiles);
-        ClientConformanceService.DeleteNonConforming(client, result with { TooLong = [] });
-        check("an extra is deleted while client files are still missing", !File.Exists(Path.Combine(client, "Data", "patch-Y.MPQ")) && File.Exists(patchC));
+        result = ClientConformanceService.Check(client, torrent, realmFiles, pins);
+        ClientConformanceService.RemoveNonConforming(client, result with { TooLong = [] });
+        check("an extra is put aside while client files are still missing", !File.Exists(Path.Combine(client, "Data", "patch-Y.MPQ")) && File.Exists(patchC));
+
+        // A torrent that would take more than a handful of files out of the folder is wrong, not the folder.
+        var many = Enumerable.Range(0, ClientConformanceService.MaxRemovals + 1)
+            .Select(i => Path.Combine(client, "Data", $"extra-{i}.MPQ")).ToArray();
+        foreach (var path in many) Put(path, Bytes(12, 50));
+        result = ClientConformanceService.Check(client, torrent, realmFiles, pins);
+        var refused = false;
+        try { ClientConformanceService.RemoveNonConforming(client, result); }
+        catch (ClientChangeRefusedException) { refused = true; }
+        check($"more than {ClientConformanceService.MaxRemovals} files to take out moves none", refused && many.All(File.Exists));
+        foreach (var path in many.Skip(1)) File.Delete(path);
+        result = ClientConformanceService.Check(client, torrent, realmFiles, pins);
+        check("a handful is still put aside", ClientConformanceService.RemoveNonConforming(client, result) == 1 && !File.Exists(many[0]));
+
+        // What was put aside stays two weeks.
+        var old = Path.Combine(removedDir, DateTime.UtcNow.AddDays(-15).ToString("yyyyMMdd-HHmmss"));
+        var recent = Path.Combine(removedDir, DateTime.UtcNow.AddDays(-13).ToString("yyyyMMdd-HHmmss"));
+        Put(Path.Combine(old, "Data", "old.MPQ"), Bytes(13, 10));
+        Put(Path.Combine(recent, "Data", "recent.MPQ"), Bytes(14, 10));
+        var stuck = Path.Combine(removedDir, DateTime.UtcNow.AddDays(-16).ToString("yyyyMMdd-HHmmss"));
+        Put(Path.Combine(stuck, "Data", "locked", "x.MPQ"), Bytes(19, 10));
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(Path.Combine(stuck, "Data", "locked"), UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        ClientConformanceService.PruneRemoved(client);
+        check("files put aside are deleted after two weeks, not before", !Directory.Exists(old) && Directory.Exists(recent) && Directory.Exists(batch));
+        if (!OperatingSystem.IsWindows())
+        {
+            check("a folder that can't be deleted doesn't stop the others", Directory.Exists(stuck) && !Directory.Exists(old));
+            File.SetUnixFileMode(Path.Combine(stuck, "Data", "locked"), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        ClientConformanceService.PruneRemoved(client);
+
+        // Lots of data the realm doesn't ship is a wrong torrent too, even in one file.
+        var huge = Path.Combine(client, "Data", "huge.MPQ");
+        using (var stream = File.Create(huge)) stream.SetLength(ClientConformanceService.MaxRemovedBytes + 1); // sparse
+        refused = false;
+        try { ClientConformanceService.RemoveNonConforming(client, ClientConformanceService.Check(client, torrent, realmFiles, pins)); }
+        catch (ClientChangeRefusedException) { refused = true; }
+        check("more than a gigabyte to put aside touches nothing", refused && File.Exists(huge));
+        File.Delete(huge);
+
+        // Program files in the client's top folder come from the launcher's own list, not the torrent.
+        var rogueSrc = Path.Combine(root, "conform-rogue", "Evermore");
+        foreach (var file in Directory.EnumerateFiles(shipped, "*", SearchOption.AllDirectories))
+            Put(Path.Combine(rogueSrc, Path.GetRelativePath(shipped, file)), File.ReadAllBytes(file));
+        Put(Path.Combine(rogueSrc, "Data", "tools", "helper.dll"), Bytes(15, 300));
+        check("a program file in a subfolder of the torrent is fine",
+            ClientConformanceService.Check(client, FixtureTorrent(rogueSrc, 16_384), realmFiles, pins).Expected == 5);
+        Put(Path.Combine(rogueSrc, "version.dll."), Bytes(16, 300));
+        refused = false;
+        try { ClientConformanceService.Check(client, FixtureTorrent(rogueSrc, 16_384), realmFiles, pins); }
+        catch (ClientChangeRefusedException) { refused = true; }
+        check("a torrent file Windows would save under another name (version.dll.) is refused", refused);
+        File.Delete(Path.Combine(rogueSrc, "version.dll."));
+        Put(Path.Combine(rogueSrc, "dinput8.dll"), Bytes(16, 300));
+        var rogue = FixtureTorrent(rogueSrc, 16_384);
+        refused = false;
+        try { ClientConformanceService.Check(client, rogue, realmFiles, pins); }
+        catch (ClientChangeRefusedException) { refused = true; }
+        check("a torrent with an unknown dll in the top folder is refused", refused);
+        File.Delete(Path.Combine(rogueSrc, "dinput8.dll"));
+        Put(Path.Combine(rogueSrc, "Wow.exe"), Bytes(17, 40_001));
+        refused = false;
+        try { ClientConformanceService.Check(client, FixtureTorrent(rogueSrc, 16_384), realmFiles, pins); }
+        catch (ClientChangeRefusedException) { refused = true; }
+        check("a torrent with another Wow.exe is refused", refused);
+        refused = false;
+        try { ClientConformanceService.Check(client, torrent, realmFiles); }
+        catch (ClientChangeRefusedException) { refused = true; }
+        check("the realm's own list doesn't take a made-up Wow.exe", refused);
+
+        var wow = Path.Combine(client, "Wow.exe");
+        check("the realm's Wow.exe passes before launch", !Throws(() => ClientConformanceService.VerifyBinaries(wow, pins)));
+        Put(Path.Combine(client, "tool.exe"), Bytes(18, 10));
+        check("an exe the realm doesn't ship doesn't stop a launch", !Throws(() => ClientConformanceService.VerifyBinaries(wow, pins)));
+        File.Delete(Path.Combine(client, "tool.exe"));
+        Put(Path.Combine(client, "mine.dll"), Bytes(18, 10));
+        check("a dll the realm doesn't ship next to Wow.exe stops a launch", Throws(() => ClientConformanceService.VerifyBinaries(wow, pins)));
+        var changed = File.ReadAllBytes(wow);
+        changed[10] ^= 0xFF;
+        File.WriteAllBytes(wow, changed);
+        check("a changed Wow.exe isn't launched", Throws(() => ClientConformanceService.VerifyBinaries(wow, pins)));
+        File.WriteAllBytes(wow, File.ReadAllBytes(Path.Combine(shipped, "Wow.exe")));
+        var pinnedDll = Path.Combine(client, "d3d9.dll");
+        File.Move(Path.Combine(client, "mine.dll"), pinnedDll);
+        check("a pinned dll that doesn't match stops a launch",
+            Throws(() => ClientConformanceService.VerifyBinaries(wow, [.. pins, new ClientBinary("d3d9.dll", 10, new string('0', 64))])));
+        File.Delete(pinnedDll);
+        var renamed = Path.Combine(client, "Launcher.exe");
+        File.Copy(wow, renamed);
+        check("only a pinned executable is launched", Throws(() => ClientConformanceService.VerifyBinaries(renamed, pins)));
+        File.Delete(renamed);
+        check("the built-in realm pins Wow.exe as shipped and with long patch names",
+            RealmBranding.ClientBinaries.Count(b => b.Name == "Wow.exe") == 2
+            && RealmBranding.ClientBinaries.All(b => b.Sha256.Length == 64 && b.Size > 0));
 
         var stranger = Path.Combine(root, "conform", "Games");
         Put(Path.Combine(stranger, "other-game.exe"), Bytes(11, 10));
@@ -547,6 +655,125 @@ internal static partial class Program
 
         ClientConformanceService.SaveCachedTorrent(client, torrent);
         check("the client torrent is kept for offline checks", ClientConformanceService.LoadCachedTorrent(client) is { } cached && cached.SequenceEqual(torrent));
+    }
+
+    /// <summary>Patch backups: the newest of each file stays, and so does every original the ledger restores.</summary>
+    private static void PatchBackupChecks(string root, Action<string, bool> check)
+    {
+        var client = Path.Combine(root, "backups", "WoW");
+        var backups = Path.Combine(client, ".portalkeeper", "backups", "patches");
+        string Backup(string set, string name, int daysAgo)
+        {
+            var file = Path.Combine(backups, set, name);
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            File.WriteAllBytes(file, [1, 2, 3]);
+            Directory.SetLastWriteTimeUtc(Path.GetDirectoryName(file)!, DateTime.UtcNow.AddDays(-daysAgo));
+            return file;
+        }
+        var original = Backup("a", "patch-z72-retail-library.MPQ", 30);
+        var older = Backup("b", "patch-z72-retail-library.MPQ", 20);
+        var newer = Backup("c", "patch-z72-retail-library.MPQ", 10);
+        var other = Backup("d", "patch-z80-spells-and-items.MPQ", 25);
+        Directory.CreateDirectory(Path.Combine(client, ".portalkeeper"));
+        File.WriteAllText(Path.Combine(client, RetiredPatchService.LedgerRelativePath), System.Text.Json.JsonSerializer.Serialize(new
+        {
+            Version = 1,
+            Patches = new[] { new { Path = "Data/patch-z72-retail-library.MPQ", Sha256 = new string('a', 64), Size = 3L,
+                Original = ".portalkeeper/backups/patches/a/patch-z72-retail-library.MPQ", Realm = "test" } },
+        }));
+        PatchService.PruneBackups(client);
+        check("only the newest backup of a patch is kept, plus the original the ledger restores",
+            File.Exists(original) && !File.Exists(older) && File.Exists(newer) && File.Exists(other)
+            && !Directory.Exists(Path.Combine(backups, "b")));
+        var justMade = Backup("e", "patch-z80-spells-and-items.MPQ", 40);
+        PatchService.PruneBackups(client, keep: justMade);
+        check("the backup just made counts as the newest", File.Exists(justMade) && !File.Exists(other));
+
+        // A backup with the name and size of a client torrent file may be the client's original, which
+        // RetiredPatchService restores by piece hash when the ledger has none: it stays.
+        var clientSrc = Path.Combine(root, "backups-src", "Evermore");
+        Directory.CreateDirectory(Path.Combine(clientSrc, "Data"));
+        File.WriteAllBytes(Path.Combine(clientSrc, "Data", "patch-C.MPQ"), [9, 9, 9, 9]);
+        ClientConformanceService.SaveCachedTorrent(client, FixtureTorrent(clientSrc, 16_384));
+        var clientOriginal = Path.Combine(backups, "f", "patch-C.MPQ");
+        Directory.CreateDirectory(Path.GetDirectoryName(clientOriginal)!);
+        File.WriteAllBytes(clientOriginal, [9, 9, 9, 9]);
+        Directory.SetLastWriteTimeUtc(Path.GetDirectoryName(clientOriginal)!, DateTime.UtcNow.AddDays(-50));
+        var ourC = Backup("g", "patch-C.MPQ", 5);
+        var ourOlderC = Backup("h", "patch-C.MPQ", 7);
+        PatchService.PruneBackups(client);
+        check("a backup that may be a client torrent file is kept", File.Exists(clientOriginal) && File.Exists(ourC) && !File.Exists(ourOlderC));
+    }
+
+    /// <summary>The automatic client check: what it does with a good torrent, a refused one, and too much to take out.</summary>
+    private static void EnforceChecks(string root, Action<string, bool> check)
+    {
+        static byte[] Bytes(int seed, int length) { var b = new byte[length]; new Random(seed).NextBytes(b); return b; }
+        void Put(string path, byte[] bytes) { Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllBytes(path, bytes); }
+        var shipped = Path.Combine(root, "enforce-src", "Evermore");
+        Put(Path.Combine(shipped, "Wow.exe"), Bytes(31, 20_000));
+        Put(Path.Combine(shipped, "Data", "common.MPQ"), Bytes(32, 30_000));
+        var torrent = FixtureTorrent(shipped, 16_384);
+        var pins = BinaryPins(shipped);
+        var rogueSrc = Path.Combine(root, "enforce-rogue", "Evermore");
+        Put(Path.Combine(rogueSrc, "Wow.exe"), Bytes(31, 20_000));
+        Put(Path.Combine(rogueSrc, "Data", "common.MPQ"), Bytes(32, 30_000));
+        Put(Path.Combine(rogueSrc, "version.dll"), Bytes(33, 100));
+        var rogue = FixtureTorrent(rogueSrc, 16_384);
+
+        string Client(string name, bool ours)
+        {
+            var client = Path.Combine(root, "enforce", name);
+            foreach (var file in Directory.EnumerateFiles(shipped, "*", SearchOption.AllDirectories))
+                Put(Path.Combine(client, Path.GetRelativePath(shipped, file)), File.ReadAllBytes(file));
+            if (ours) Put(Path.Combine(client, ClientConformanceService.InstallMarkerRelativePath), [1]);
+            return client;
+        }
+
+        var good = Client("good", ours: false);
+        var extra = Path.Combine(good, "Data", "patch-Z.MPQ");
+        Put(extra, Bytes(34, 10));
+        var result = ClientConformanceService.Enforce(good, torrent, [], pins);
+        check("a good torrent: extras put aside, Ok, torrent kept for later",
+            result is { Verdict: ClientConformanceService.Verdict.Ok, Removed: 1, TorrentRefused: false, Notice: "" }
+            && !File.Exists(extra) && ClientConformanceService.LoadCachedTorrent(good) is not null);
+
+        Put(extra, Bytes(34, 10));
+        result = ClientConformanceService.Enforce(good, rogue, [], pins);
+        check("a refused torrent falls back to the last good one and says why",
+            result is { Verdict: ClientConformanceService.Verdict.Ok, TorrentRefused: true, Removed: 1 }
+            && result.Notice.Contains("version.dll") && !File.Exists(extra)
+            && ClientConformanceService.LoadCachedTorrent(good)!.AsSpan().SequenceEqual(torrent));
+
+        var fresh = Client("fresh", ours: false);
+        Put(Path.Combine(fresh, "Data", "patch-Z.MPQ"), Bytes(35, 10));
+        result = ClientConformanceService.Enforce(fresh, rogue, [], pins);
+        check("a refused torrent with nothing to fall back on leaves the client alone",
+            result is { Verdict: ClientConformanceService.Verdict.Ok, TorrentRefused: true, Removed: 0 }
+            && File.Exists(Path.Combine(fresh, "Data", "patch-Z.MPQ")));
+
+        var stranger = Client("stranger", ours: false);
+        File.Delete(Path.Combine(stranger, "Data", "common.MPQ"));
+        check("someone else's client still goes through INSTALL WOW",
+            ClientConformanceService.Enforce(stranger, torrent, [], pins).Verdict == ClientConformanceService.Verdict.NotRealmClient);
+
+        var ours = Client("ours", ours: true);
+        File.Delete(Path.Combine(ours, "Data", "common.MPQ"));
+        check("the launcher's own client that differs needs an update",
+            ClientConformanceService.Enforce(ours, torrent, [], pins) is { Verdict: ClientConformanceService.Verdict.NeedsUpdate, TorrentRefused: false });
+        var oursCached = Client("ours-cached", ours: true);
+        ClientConformanceService.SaveCachedTorrent(oursCached, torrent);
+        File.Delete(Path.Combine(oursCached, "Data", "common.MPQ"));
+        check("...but not from a refused torrent",
+            ClientConformanceService.Enforce(oursCached, rogue, [], pins) is { Verdict: ClientConformanceService.Verdict.NeedsUpdate, TorrentRefused: true });
+
+        var crowded = Client("crowded", ours: false);
+        var many = Enumerable.Range(0, ClientConformanceService.MaxRemovals + 1)
+            .Select(i => Path.Combine(crowded, "Data", $"extra-{i}.MPQ")).ToArray();
+        foreach (var path in many) Put(path, Bytes(36, 10));
+        result = ClientConformanceService.Enforce(crowded, torrent, [], pins);
+        check("too much to take out: still playable, nothing moved, and the player is told",
+            result is { Verdict: ClientConformanceService.Verdict.Ok, Removed: 0 } && result.Notice.Length > 0 && many.All(File.Exists));
     }
 
     private static async Task RetiredPatchChecks(string root, Action<string, bool> check)

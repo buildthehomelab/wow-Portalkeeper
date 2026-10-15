@@ -216,8 +216,10 @@ public sealed partial class MainViewModel
     /// <summary>
     /// Downloads the realm's client into its target folder. Files already there are kept when they pass
     /// the torrent's checksums, so only what differs is downloaded; files the realm doesn't ship (and
-    /// client files longer than the realm's) are deleted first. Addons, settings, Logs and Screenshots
-    /// are never touched; Cache is cleared when files change.
+    /// client files longer than the realm's) are put aside in .portalkeeper/removed first, unless
+    /// there are more than a handful (then nothing changes and the install stops). Addons, settings,
+    /// Logs and Screenshots are never touched; Cache is cleared when files change. Program files have
+    /// to be ones the launcher pins, in the torrent and again once they're downloaded.
     /// </summary>
     private async Task DownloadClientAsync(LauncherSession session, string? folder, bool repair)
     {
@@ -228,7 +230,9 @@ public sealed partial class MainViewModel
         SetInstallStatus(repair ? "Checking World of Warcraft..." : "Getting the client download...", 0);
         try
         {
-            _clientTorrent ??= await _accountService.GetClientTorrentAsync(session, cancel);
+            var clientTorrent = _clientTorrent ?? await _accountService.GetClientTorrentAsync(session, cancel);
+            ClientConformanceService.RequireAcceptedBinaries(clientTorrent);
+            _clientTorrent = clientTorrent;
             var infoHash = TorrentService.InfoHashOf(_clientTorrent);
             string target;
             if (repair)
@@ -257,11 +261,11 @@ public sealed partial class MainViewModel
 
             if (isWowClient || repair)
             {
-                SetInstallStatus("Removing files the realm doesn't ship...", 0);
+                SetInstallStatus("Putting aside files the realm doesn't ship...", 0);
                 await StopAllSharingAsync();
                 var torrent = _clientTorrent;
                 var realmFiles = RealmPatchFiles(target);
-                await Task.Run(() => ClientConformanceService.DeleteNonConforming(target,
+                await Task.Run(() => ClientConformanceService.RemoveNonConforming(target,
                     ClientConformanceService.Check(target, torrent, realmFiles)), cancel);
                 SetInstallStatus("Checking your files against the realm's client (this takes a few minutes)...", 0);
             }
@@ -269,6 +273,9 @@ public sealed partial class MainViewModel
             var verb = repair ? "Updating World of Warcraft" : "Downloading World of Warcraft";
             var progress = new Progress<TorrentProgress>(p => SetInstallStatus(DescribeDownload(verb, p), p.Percent));
             await _torrents.DownloadAsync(_clientTorrent, target, keepSharing: true, progress, cancel);
+            var downloadedExecutable = ClientService.FindWowExecutable(target)
+                ?? throw new FileNotFoundException("The realm's client download has no Wow.exe.");
+            await Task.Run(() => ClientConformanceService.VerifyBinaries(downloadedExecutable), cancel);
             ClientConformanceService.SaveCachedTorrent(target, _clientTorrent);
 
             _savedSettings.PendingClientInstallPath = null;
@@ -468,7 +475,8 @@ public sealed partial class MainViewModel
 
     /// <summary>
     /// Holds the client to exactly what the realm ships (ClientConformanceService): files the realm
-    /// doesn't ship are deleted, and when client files are missing or changed, a client the launcher
+    /// doesn't ship are put aside in .portalkeeper/removed (up to a handful; more leaves the folder
+    /// alone and says so), and when client files are missing or changed, a client the launcher
     /// installed (or made from another client) is updated in place by itself. Any other client goes
     /// through INSTALL WOW first, which uses it as the base. Only for the built-in realm. When the portal
     /// can't be reached the last client torrent seen is used; without any, the client isn't held back.
@@ -492,21 +500,17 @@ public sealed partial class MainViewModel
             if (torrent is null) return SetClientCheck(ClientCheck.Ok);
 
             var realmFiles = RealmPatchFiles(root);
-            var result = await Task.Run(() => ClientConformanceService.Check(root, torrent, realmFiles));
-            var ours = ClientConformanceService.IsRealmInstall(root);
-            if (!result.HasAllClientFiles && !ours)
+            var check = await Task.Run(() => ClientConformanceService.Enforce(root, torrent, realmFiles));
+            // A refused torrent is fetched again next time (the portal may have fixed it).
+            if (check.TorrentRefused) _clientTorrent = null;
+            if (check.Removed > 0) RefreshPatches();
+            if (check.Verdict == ClientConformanceService.Verdict.NotRealmClient)
                 return SetClientCheck(ClientCheck.NotRealmClient);
-            if (result.Extra.Count > 0)
-            {
-                var deleted = await Task.Run(() => ClientConformanceService.DeleteNonConforming(root,
-                    result with { TooLong = [] }));
-                if (deleted > 0) RefreshPatches();
-            }
-            if (result.HasAllClientFiles)
-            {
-                ClientConformanceService.SaveCachedTorrent(root, torrent);
-                return SetClientCheck(ClientCheck.Ok);
-            }
+            if (check.Verdict == ClientConformanceService.Verdict.Ok)
+                return SetClientCheck(ClientCheck.Ok, check.Notice);
+            // The client differs from the last torrent that passed, and the portal's won't be followed.
+            if (check.TorrentRefused)
+                return SetClientCheck(ClientCheck.NeedsUpdate, check.Notice);
 
             if (DateTimeOffset.UtcNow - _lastAutoUpdate >= AutoUpdateInterval)
             {
@@ -515,7 +519,7 @@ public sealed partial class MainViewModel
                 return SetClientCheck(ClientCheck.NeedsUpdate, "Updating World of Warcraft...");
             }
             return SetClientCheck(ClientCheck.NeedsUpdate,
-                $"{result.Different.Count} World of Warcraft file(s) don't match the realm's client; CHECK AGAIN retries the update.");
+                $"{check.Conformance!.Different.Count} World of Warcraft file(s) don't match the realm's client; CHECK AGAIN retries the update.");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {

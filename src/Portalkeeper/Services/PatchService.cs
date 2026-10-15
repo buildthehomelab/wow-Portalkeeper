@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
+using MonoTorrent;
 using Portalkeeper.Models;
 namespace Portalkeeper.Services;
 
@@ -48,8 +51,7 @@ public sealed class PatchService
     {
         ManagedPath.Hash(hash);
         if (hash.Length == 0) return true;
-        using var stream = File.OpenRead(path);
-        return Convert.ToHexString(SHA256.HashData(stream)).Equals(hash, StringComparison.OrdinalIgnoreCase);
+        return RetiredPatchService.Sha256Of(path).Equals(hash, StringComparison.OrdinalIgnoreCase);
     }
     public async Task InstallAsync(string root, PatchDefinition patch, RealmInfo? realm = null)
     {
@@ -141,13 +143,75 @@ public sealed class PatchService
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException) { }
     }
-    /// <summary>Copies the file about to be replaced or removed into .portalkeeper/backups; returns the copy.</summary>
+    /// <summary>
+    /// Copies the file about to be replaced or removed into .portalkeeper/backups; returns the copy.
+    /// Older backups of the same file go (see <see cref="PruneBackups"/>).
+    /// </summary>
     private static string? Backup(string root, string destination)
     {
         if (!File.Exists(destination)) return null;
         var backup = ManagedPath.Resolve(root, Path.Combine(".portalkeeper", "backups", "patches", Guid.NewGuid().ToString("N"), Path.GetFileName(destination)));
         Directory.CreateDirectory(Path.GetDirectoryName(backup)!);
         File.Copy(destination, backup);
+        PruneBackups(root, keep: backup);
         return backup;
+    }
+
+    /// <summary>
+    /// Keeps only the newest backup of each patch file (<paramref name="keep"/> counts as the newest),
+    /// plus every backup the realm-patch ledger restores when a patch is retired (the client file the
+    /// patch first replaced), and any backup that may be a file of the client torrent (same name and
+    /// size as one): RetiredPatchService restores those by piece hash when the ledger has no original.
+    /// A 2 GB patch rebuilt every week otherwise leaves a copy each time. Best effort, set by set.
+    /// </summary>
+    public static void PruneBackups(string root, string? keep = null)
+    {
+        string backups;
+        HashSet<string> needed;
+        var clientFiles = new HashSet<(string Name, long Length)>();
+        try
+        {
+            backups = ManagedPath.Resolve(root, Path.Combine(".portalkeeper", "backups", "patches"));
+            if (!Directory.Exists(backups)) return;
+            needed = RetiredPatchService.Load(root).Where(e => e.Original is not null)
+                .Select(e => ManagedPath.Resolve(root, e.Original!)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException) { return; }
+        try
+        {
+            if (ClientConformanceService.LoadCachedTorrent(root) is { } torrent)
+                foreach (var file in Torrent.Load(torrent).Files)
+                    clientFiles.Add((Path.GetFileName(RetiredPatchService.Normalize(file.Path.ToString())).ToLowerInvariant(), file.Length));
+        }
+        catch (Exception) { return; } // an unreadable torrent can't say which backups are client files: keep them all
+
+        var newest = keep is null ? null : Path.GetFullPath(keep);
+        List<IGrouping<string, (string Directory, string[] Files)>> sets;
+        try
+        {
+            sets = Directory.EnumerateDirectories(backups)
+                .Select(directory => (Directory: directory, Files: Directory.GetFiles(directory)))
+                .Where(set => set.Files.Length == 1)
+                .GroupBy(set => Path.GetFileName(set.Files[0]), StringComparer.OrdinalIgnoreCase).ToList();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return; }
+        foreach (var group in sets)
+        {
+            var ordered = group
+                .OrderByDescending(set => string.Equals(Path.GetFullPath(set.Files[0]), newest, StringComparison.OrdinalIgnoreCase))
+                .ThenByDescending(set => Directory.GetLastWriteTimeUtc(set.Directory));
+            foreach (var set in ordered.Skip(1))
+            {
+                try
+                {
+                    var file = set.Files[0];
+                    if (needed.Contains(Path.GetFullPath(file))
+                        || clientFiles.Contains((Path.GetFileName(file).ToLowerInvariant(), new FileInfo(file).Length)))
+                        continue;
+                    Directory.Delete(ManagedPath.Resolve(root, Path.GetRelativePath(root, set.Directory)), recursive: true);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException) { }
+            }
+        }
     }
 }
