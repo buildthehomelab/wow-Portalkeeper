@@ -284,10 +284,14 @@ public static class RetiredPatchService
         return known.Any(k => k.Size == size && Sha256Matches(path, k.Sha256));
     }
 
-    private static bool Sha256Matches(string path, string sha256)
+    private static bool Sha256Matches(string path, string sha256) =>
+        Sha256Of(path).Equals(sha256, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The file's SHA-256, upper-case hex.</summary>
+    public static string Sha256Of(string path)
     {
         using var stream = File.OpenRead(path);
-        return Convert.ToHexString(SHA256.HashData(stream)).Equals(sha256, StringComparison.OrdinalIgnoreCase);
+        return Convert.ToHexString(SHA256.HashData(stream));
     }
 
     private static string? FindVerifiedBackup(string root, Torrent torrent, ITorrentFile file)

@@ -1,9 +1,9 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Security.Cryptography;
 using MonoTorrent;
 
 namespace Portalkeeper.Services;
@@ -45,8 +45,13 @@ public static class ClientConformanceService
     public const string CachedTorrentRelativePath = ".portalkeeper/client.torrent";
     public const string RemovedRelativePath = ".portalkeeper/removed";
 
-    /// <summary>More files than this the realm doesn't ship means the torrent is wrong, not the folder: nothing is moved.</summary>
+    /// <summary>
+    /// More files than this to take out, or more than <see cref="MaxRemovedBytes"/> of files the realm
+    /// doesn't ship, means the torrent is wrong, not the folder: nothing is touched. The realm retires
+    /// more than that through a launcher release (RemovedClientFiles), not the torrent alone.
+    /// </summary>
     public const int MaxRemovals = 10;
+    public const long MaxRemovedBytes = 1L << 30;
     /// <summary>How long files taken out of the client are kept in .portalkeeper/removed.</summary>
     public static readonly TimeSpan RemovedKeptFor = TimeSpan.FromDays(14);
     private const string RemovedStampFormat = "yyyyMMdd-HHmmss";
@@ -67,8 +72,8 @@ public static class ClientConformanceService
     public static ClientConformance Check(string root, byte[] clientTorrent, IEnumerable<string> realmFiles,
         IReadOnlyList<ClientBinary>? binaries = null)
     {
-        RequireAcceptedBinaries(clientTorrent, binaries);
         var torrent = Torrent.Load(clientTorrent);
+        RequireAcceptedBinaries(torrent, binaries);
         var expected = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         foreach (var file in torrent.Files)
             expected[RetiredPatchService.Normalize(file.Path.ToString())] = file.Length;
@@ -127,29 +132,55 @@ public static class ClientConformanceService
     private static bool IsProgramFile(string name) =>
         ProgramSuffixes.Any(s => name.EndsWith(s, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>Program files Wow.exe loads by itself when they're next to it.</summary>
+    private static bool IsLibrary(string name) =>
+        name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".asi", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>
     /// Throws <see cref="ClientChangeRefusedException"/> when <paramref name="clientTorrent"/> has a
     /// program file in the client's top folder that isn't one of <paramref name="binaries"/> (by name
-    /// and size; default RealmBranding.ClientBinaries). The content is checked once it's on disk, by
+    /// and size; default RealmBranding.ClientBinaries), or a path Windows would write under another
+    /// name (version.dll. is saved as version.dll). The content is checked once it's on disk, by
     /// <see cref="VerifyBinaries"/>.
     /// </summary>
-    public static void RequireAcceptedBinaries(byte[] clientTorrent, IReadOnlyList<ClientBinary>? binaries = null)
+    public static void RequireAcceptedBinaries(byte[] clientTorrent, IReadOnlyList<ClientBinary>? binaries = null) =>
+        RequireAcceptedBinaries(Torrent.Load(clientTorrent), binaries);
+
+    private static void RequireAcceptedBinaries(Torrent torrent, IReadOnlyList<ClientBinary>? binaries)
     {
         binaries ??= RealmBranding.ClientBinaries;
-        foreach (var file in Torrent.Load(clientTorrent).Files)
+        foreach (var file in torrent.Files)
         {
             var path = RetiredPatchService.Normalize(file.Path.ToString());
+            try { ManagedPath.Relative(path); }
+            catch (InvalidDataException)
+            {
+                throw new ClientChangeRefusedException($"The realm's client download lists a file named \"{path}\", which this launcher doesn't accept, so nothing was changed.");
+            }
             if (path.Contains('/') || !IsProgramFile(path)) continue;
             if (!binaries.Any(b => b.Name.Equals(path, StringComparison.OrdinalIgnoreCase) && b.Size == file.Length))
                 throw new ClientChangeRefusedException($"The realm's client download lists {path}, which this launcher doesn't accept as part of World of Warcraft, so nothing was changed. A launcher update may be needed.");
         }
     }
 
+    private static readonly ConcurrentDictionary<(string Path, long Length, DateTime Written), string> VerifiedHashes = new();
+
+    /// <summary>SHA-256 of <paramref name="file"/>, remembered while its size and write time stay the same.</summary>
+    private static string HashOf(string file, long length)
+    {
+        var key = (Path.GetFullPath(file), length, File.GetLastWriteTimeUtc(file));
+        if (VerifiedHashes.TryGetValue(key, out var known)) return known;
+        var hash = RetiredPatchService.Sha256Of(file);
+        VerifiedHashes[key] = hash;
+        return hash;
+    }
+
     /// <summary>
     /// Before a launch: <paramref name="executable"/> has to be one of <paramref name="binaries"/>
     /// (default RealmBranding.ClientBinaries) byte for byte, and so does every other program file in
-    /// its folder that has the name of one. Program files the realm doesn't ship are the player's
-    /// business (conformance takes them out of a realm client).
+    /// its folder that has the name of one. A dll next to it that isn't one of them stops the launch
+    /// too, since Wow.exe may load it; other program files (a tool's exe) are left alone. Hashes are
+    /// remembered, so calling this off the UI thread first makes the launch's own check cheap.
     /// </summary>
     public static void VerifyBinaries(string executable, IReadOnlyList<ClientBinary>? binaries = null)
     {
@@ -161,69 +192,139 @@ public static class ClientConformanceService
         {
             var name = Path.GetFileName(file);
             var pins = binaries.Where(b => b.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).ToList();
-            if (pins.Count == 0) continue;
-            var length = new FileInfo(file).Length;
-            string? hash = null;
-            if (pins.Any(p => p.Size == length))
+            if (pins.Count == 0)
             {
-                using var stream = File.OpenRead(file);
-                hash = Convert.ToHexString(SHA256.HashData(stream));
+                if (IsLibrary(name))
+                    throw new InvalidDataException($"{name} in the World of Warcraft folder isn't part of the realm's client, so the game wasn't started. Move it out of the folder.");
+                continue;
             }
+            var length = new FileInfo(file).Length;
+            var hash = pins.Any(p => p.Size == length) ? HashOf(file, length) : null;
             if (hash is null || !pins.Any(p => p.Size == length && p.Sha256.Equals(hash, StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidDataException($"{name} in the World of Warcraft folder isn't the realm's, so the game wasn't started. The launcher updates it from the realm's client.");
         }
     }
 
     /// <summary>
-    /// Moves files the realm didn't ship, and client files longer than the torrent's (a torrent
-    /// rewrites a file in place and never shortens it, so those are downloaded again from scratch), to
-    /// .portalkeeper/removed/&lt;time&gt;/, where they stay for <see cref="RemovedKeptFor"/>.
+    /// Moves files the realm didn't ship to .portalkeeper/removed/&lt;time&gt;/, where they stay for
+    /// <see cref="RemovedKeptFor"/>, and deletes client files longer than the torrent's (a torrent
+    /// rewrites a file in place and never shortens it, so those are downloaded again from scratch, and a
+    /// kept copy would only double their size on disk).
     /// Shorter files stay: they may be a paused download, and the torrent's hash check keeps every piece
-    /// of them that's right. More than <see cref="MaxRemovals"/> files throws
-    /// <see cref="ClientChangeRefusedException"/> and moves none. Returns how many were moved.
+    /// of them that's right. More than <see cref="MaxRemovals"/> files, or more than
+    /// <see cref="MaxRemovedBytes"/> to put aside, throws <see cref="ClientChangeRefusedException"/>
+    /// and touches none. Returns how many were taken out.
     /// </summary>
     public static int RemoveNonConforming(string root, ClientConformance conformance)
     {
+        var tooLong = new HashSet<string>(conformance.TooLong, StringComparer.OrdinalIgnoreCase);
         var files = conformance.Extra.Concat(conformance.TooLong).Distinct(StringComparer.OrdinalIgnoreCase)
             .Where(relative => File.Exists(ManagedPath.Resolve(root, relative))).ToList();
         if (files.Count == 0) return 0;
         if (files.Count > MaxRemovals)
             throw new ClientChangeRefusedException($"{files.Count} files in the World of Warcraft folder aren't part of the realm's client ("
                 + string.Join(", ", files.Take(5)) + (files.Count > 5 ? ", ..." : "")
-                + $"). The launcher only puts aside up to {MaxRemovals} by itself, so nothing was moved. Move them out of the folder yourself, or install into an empty folder.");
+                + $"). The launcher only takes out up to {MaxRemovals} by itself, so nothing was changed. Move them out of the folder yourself, or install into an empty folder.");
+        var setAside = files.Where(f => !tooLong.Contains(f)).ToList();
+        var bytes = setAside.Sum(f => new FileInfo(ManagedPath.Resolve(root, f)).Length);
+        if (bytes > MaxRemovedBytes)
+            throw new ClientChangeRefusedException($"{bytes / (1024 * 1024):N0} MB of files in the World of Warcraft folder aren't part of the realm's client ("
+                + string.Join(", ", setAside.Take(5)) + (setAside.Count > 5 ? ", ..." : "")
+                + "). That's more than the launcher takes out by itself, so nothing was changed. Move them out of the folder yourself, or install into an empty folder.");
 
         var batch = RemovedRelativePath + "/" + DateTime.UtcNow.ToString(RemovedStampFormat, CultureInfo.InvariantCulture) + "/";
-        var moved = 0;
+        var removed = 0;
         foreach (var relative in files)
         {
             var full = ManagedPath.Resolve(root, relative);
             ManagedRuntimeWriteGuard.Check(root, full);
-            var target = ManagedPath.Resolve(root, batch + relative);
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            File.Move(full, target, overwrite: true);
-            moved++;
+            if (tooLong.Contains(relative))
+                File.Delete(full);
+            else
+            {
+                var target = ManagedPath.Resolve(root, batch + relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.Move(full, target, overwrite: true);
+            }
+            removed++;
         }
         PatchService.ClearClientCache(root);
-        return moved;
+        return removed;
     }
 
-    /// <summary>Deletes what <see cref="RemoveNonConforming"/> put aside more than <see cref="RemovedKeptFor"/> ago. Best effort.</summary>
+    /// <summary>Deletes what <see cref="RemoveNonConforming"/> put aside more than <see cref="RemovedKeptFor"/> ago. Best effort, folder by folder.</summary>
     public static void PruneRemoved(string root)
     {
+        string removed;
         try
         {
-            var removed = ManagedPath.Resolve(root, RemovedRelativePath);
+            removed = ManagedPath.Resolve(root, RemovedRelativePath);
             if (!Directory.Exists(removed)) return;
-            foreach (var batch in Directory.EnumerateDirectories(removed).ToList())
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException) { return; }
+        foreach (var batch in Directory.EnumerateDirectories(removed).ToList())
+        {
+            if (!DateTime.TryParseExact(Path.GetFileName(batch), RemovedStampFormat, CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var time)
+                || DateTime.UtcNow - time < RemovedKeptFor)
+                continue;
+            try { Directory.Delete(ManagedPath.Resolve(root, RemovedRelativePath + "/" + Path.GetFileName(batch)), recursive: true); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException) { }
+        }
+    }
+
+    public enum Verdict { Ok, NotRealmClient, NeedsUpdate }
+
+    /// <param name="Verdict">Ok: playable. NotRealmClient: has to go through INSTALL WOW. NeedsUpdate: client files differ.</param>
+    /// <param name="Conformance">The check the verdict came from (null when no torrent could be used).</param>
+    /// <param name="Removed">How many files were taken out of the client.</param>
+    /// <param name="Notice">Why the launcher didn't do everything the realm's torrent asks, for the player.</param>
+    /// <param name="TorrentRefused">The torrent given was refused; the last one seen here was used, if any.</param>
+    public sealed record Enforcement(Verdict Verdict, ClientConformance? Conformance, int Removed, string Notice, bool TorrentRefused);
+
+    /// <summary>
+    /// The automatic check of a client (every sync and before ENTER REALM): tidies the launcher's own
+    /// folders, compares the client with <paramref name="clientTorrent"/> and takes out what the realm
+    /// doesn't ship. A refused torrent falls back to the last one this client was checked against
+    /// (which passed); without one the client is left alone. Doesn't download anything: the caller
+    /// starts the update when the verdict is NeedsUpdate and the torrent wasn't refused.
+    /// </summary>
+    public static Enforcement Enforce(string root, byte[] clientTorrent, IEnumerable<string> realmFiles,
+        IReadOnlyList<ClientBinary>? binaries = null)
+    {
+        PruneRemoved(root);
+        PatchService.PruneBackups(root);
+        var files = realmFiles.ToList();
+        var notice = "";
+        var refused = false;
+        ClientConformance result;
+        try { result = Check(root, clientTorrent, files, binaries); }
+        catch (ClientChangeRefusedException ex)
+        {
+            notice = ex.Message;
+            refused = true;
+            var cached = LoadCachedTorrent(root);
+            if (cached is null) return new(Verdict.Ok, null, 0, notice, true);
+            try { result = Check(root, cached, files, binaries); }
+            catch (Exception) // refused too, or unreadable
             {
-                if (!DateTime.TryParseExact(Path.GetFileName(batch), RemovedStampFormat, CultureInfo.InvariantCulture,
-                        DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var time)
-                    || DateTime.UtcNow - time < RemovedKeptFor)
-                    continue;
-                Directory.Delete(ManagedPath.Resolve(root, RemovedRelativePath + "/" + Path.GetFileName(batch)), recursive: true);
+                return new(Verdict.Ok, null, 0, notice, true);
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException) { }
+        if (!result.HasAllClientFiles && !IsRealmInstall(root))
+            return new(Verdict.NotRealmClient, result, 0, notice, refused);
+        var removed = 0;
+        if (result.Extra.Count > 0)
+        {
+            try { removed = RemoveNonConforming(root, result with { TooLong = [] }); }
+            catch (ClientChangeRefusedException ex) { notice = notice.Length > 0 ? notice + " " + ex.Message : ex.Message; }
+        }
+        if (result.HasAllClientFiles)
+        {
+            if (!refused) SaveCachedTorrent(root, clientTorrent);
+            return new(Verdict.Ok, result, removed, notice, refused);
+        }
+        return new(Verdict.NeedsUpdate, result, removed, notice, refused);
     }
 
     /// <summary>The realm's client was installed here, or a client was made into it (INSTALL WOW leaves a marker).</summary>

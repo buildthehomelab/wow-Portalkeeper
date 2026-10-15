@@ -596,6 +596,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             var unsatisfied = currentAddons.Where(a => a.Definition.Required && (!a.IsInstalled || a.IsUpdateAvailable)).ToArray();
             if (unsatisfied.Length > 0) throw new InvalidOperationException("Required addons need attention: " + string.Join(", ", unsatisfied.Select(a => a.Definition.Name)));
             PrepareCombatLogsForLaunch();
+            // PrepareAndLaunch checks the client's program files again; hashing them here, off the UI
+            // thread, leaves it only remembered hashes to compare.
+            if (RealmBranding.IsBuiltIn(_realmInfo) && !IsIsolatedRealm
+                && ClientService.FindWowExecutable(EffectiveClientPath, _realmInfo.Client.Executable) is { } launchExecutable)
+                await Task.Run(() => ClientConformanceService.VerifyBinaries(launchExecutable));
             result = _realmLaunchService.PrepareAndLaunch(
                 EffectiveClientPath,
                 _realmInfo, ClientPath, AccountName, GamePasswordForLaunch(_realmInfo));

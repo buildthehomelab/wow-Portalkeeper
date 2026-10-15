@@ -273,8 +273,9 @@ public sealed partial class MainViewModel
             var verb = repair ? "Updating World of Warcraft" : "Downloading World of Warcraft";
             var progress = new Progress<TorrentProgress>(p => SetInstallStatus(DescribeDownload(verb, p), p.Percent));
             await _torrents.DownloadAsync(_clientTorrent, target, keepSharing: true, progress, cancel);
-            ClientConformanceService.VerifyBinaries(ClientService.FindWowExecutable(target)
-                ?? throw new FileNotFoundException("The realm's client download has no Wow.exe."));
+            var downloadedExecutable = ClientService.FindWowExecutable(target)
+                ?? throw new FileNotFoundException("The realm's client download has no Wow.exe.");
+            await Task.Run(() => ClientConformanceService.VerifyBinaries(downloadedExecutable), cancel);
             ClientConformanceService.SaveCachedTorrent(target, _clientTorrent);
 
             _savedSettings.PendingClientInstallPath = null;
@@ -499,36 +500,17 @@ public sealed partial class MainViewModel
             if (torrent is null) return SetClientCheck(ClientCheck.Ok);
 
             var realmFiles = RealmPatchFiles(root);
-            await Task.Run(() => { ClientConformanceService.PruneRemoved(root); PatchService.PruneBackups(root); });
-            ClientConformance result;
-            try { result = await Task.Run(() => ClientConformanceService.Check(root, torrent, realmFiles)); }
-            catch (ClientChangeRefusedException ex)
-            {
-                // The portal's torrent lists a program file the launcher doesn't know: leave the client
-                // as it is (ENTER REALM still checks Wow.exe against the launcher's own list) and fetch
-                // the torrent again next time.
-                _clientTorrent = null;
-                return SetClientCheck(ClientCheck.Ok, ex.Message);
-            }
-            var ours = ClientConformanceService.IsRealmInstall(root);
-            if (!result.HasAllClientFiles && !ours)
+            var check = await Task.Run(() => ClientConformanceService.Enforce(root, torrent, realmFiles));
+            // A refused torrent is fetched again next time (the portal may have fixed it).
+            if (check.TorrentRefused) _clientTorrent = null;
+            if (check.Removed > 0) RefreshPatches();
+            if (check.Verdict == ClientConformanceService.Verdict.NotRealmClient)
                 return SetClientCheck(ClientCheck.NotRealmClient);
-            var notice = "";
-            if (result.Extra.Count > 0)
-            {
-                try
-                {
-                    var moved = await Task.Run(() => ClientConformanceService.RemoveNonConforming(root,
-                        result with { TooLong = [] }));
-                    if (moved > 0) RefreshPatches();
-                }
-                catch (ClientChangeRefusedException ex) { notice = ex.Message; }
-            }
-            if (result.HasAllClientFiles)
-            {
-                ClientConformanceService.SaveCachedTorrent(root, torrent);
-                return SetClientCheck(ClientCheck.Ok, notice);
-            }
+            if (check.Verdict == ClientConformanceService.Verdict.Ok)
+                return SetClientCheck(ClientCheck.Ok, check.Notice);
+            // The client differs from the last torrent that passed, and the portal's won't be followed.
+            if (check.TorrentRefused)
+                return SetClientCheck(ClientCheck.NeedsUpdate, check.Notice);
 
             if (DateTimeOffset.UtcNow - _lastAutoUpdate >= AutoUpdateInterval)
             {
@@ -537,7 +519,7 @@ public sealed partial class MainViewModel
                 return SetClientCheck(ClientCheck.NeedsUpdate, "Updating World of Warcraft...");
             }
             return SetClientCheck(ClientCheck.NeedsUpdate,
-                $"{result.Different.Count} World of Warcraft file(s) don't match the realm's client; CHECK AGAIN retries the update.");
+                $"{check.Conformance!.Different.Count} World of Warcraft file(s) don't match the realm's client; CHECK AGAIN retries the update.");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {
