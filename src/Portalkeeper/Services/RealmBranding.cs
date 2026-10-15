@@ -70,6 +70,32 @@ public static class RealmBranding
     ];
 
     /// <summary>
+    /// The program files of the realm's client (the Evermore client torrent: TheraWoW's client, Wow.exe
+    /// with the LongPatchNameService edit). They're pinned here rather than in realm.conf or the
+    /// torrent, which both come from the portal: a client torrent listing any other program file in
+    /// the client's top folder is refused, and the game isn't started when one of these doesn't match.
+    /// Changing one of them on the server needs a launcher release with its new hash first.
+    /// </summary>
+    public static readonly IReadOnlyList<ClientBinary> ClientBinaries =
+    [
+        // Stock TheraWoW 3.3.5a (12340), and the same file after LongPatchNameService.Ensure.
+        new("Wow.exe", 7704216, "c6f9209840a8a5941538bcda0e63c4bf445a154b6c1c9c7397be31cebabc289c"),
+        new("Wow.exe", 7704216, "50b8931f4d3a8558752b3718447253bc92b4f488cd6c4803809d2f82ecd14441"),
+        new("WowError.exe", 350360, "964eb9ed647c4614f3a3ecf977955750223ecbc8ff0a3bb4078e4dff779244f8"),
+        new("Repair.exe", 975512, "ae98037ec2f858f0f9a6c69b3267e5268f20dbf08f324aa4453d2252c1b31d52"),
+        new("Battle.net.dll", 15588224, "88116951b04723cbb1073a1a0ff72dfdc40367f6649dffd08c602caa3ef1141f"),
+        new("DivxDecoder.dll", 413696, "ed34d37b575c91a56704218eb9f6abbefda8b7de0e2ed44c96191abd0f9915a5"),
+        new("Scan.dll", 47876, "0ca274f1c6f38be6864a8ef18a5601d3139c9336e1de29328c50abc07bc74807"),
+        new("d3d9.dll", 4493326, "00ecd422b3b12e9d3b309785f3f19431405389d80eb4a37018ebc63e2d87d900"),
+        new("dbghelp.dll", 1039728, "3f9ad6986eb1f3a09eb0b5cad888ba656f9148b3339399076f2541b3bc59213c"),
+        new("dinput8.dll", 785408, "2ddeb75d64c39da53efbd3980d27ae0ffff40104eda52580afc0be490ad25bd0"),
+        new("ijl15.dll", 372736, "334aa12f7dee453d1c6cb1b661a3bb3494d3e4cc9c2ff3f9002064c78404e43a"),
+        new("msvcr80.dll", 632656, "9382aaed2db19cd75a70e38964f06c63f19f63c9dfb5a33b0c2d445bb41b6e46"),
+        new("skia.dll", 2833920, "ef23addd3f27c748f5ef07608da2c71c3551454debdcb8d4d40141b6e9a057d4"),
+        new("unicows.dll", 245408, "22f23cc65698741184ec34f46e6f69717644e0b5aabf5d5bd015101f2d72e56e"),
+    ];
+
+    /// <summary>
     /// The realm patch whose AccountLogin.lua signs in with the launcher login (wow-server
     /// tools/client-patches/login). The game password is only handed to clients that install it.
     /// It is known by its realm.conf section, [Patch.LauncherLogin], whatever its file is called; the

@@ -1166,7 +1166,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             LaunchStatus = "Required patches need attention: " + string.Join(", ", Patches.Where(p => p.Definition.Requirement == ComponentRequirement.Required && !p.IsValid).Select(p => p.Definition.Name + " (" + p.Status + ")"));
             return;
         }
-        LaunchStatus = "Ready to enter realm.";
+        // The client is playable, but the launcher refused what the realm's client torrent asked for.
+        LaunchStatus = _clientCheck == ClientCheck.Ok && _clientCheckStatus.Length > 0
+            ? "Ready to enter realm. " + _clientCheckStatus
+            : "Ready to enter realm.";
     }
 
     // ---------------------------------------------------------

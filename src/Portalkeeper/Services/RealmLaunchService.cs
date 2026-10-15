@@ -90,6 +90,10 @@ public sealed class RealmLaunchService
             wowExecutable = ClientService.FindWowExecutable(fullClientDirectory, realm.Client.Executable)
                 ?? throw new FileNotFoundException("Wow.exe was not found in the configured client directory.");
         }
+        // The built-in realm's client comes from the portal; what runs has to be what this launcher
+        // was built to accept, whatever the portal says.
+        if (RealmBranding.IsBuiltIn(realm))
+            ClientConformanceService.VerifyBinaries(wowExecutable);
 
         var localeDirectory = FindLocaleDirectory(fullClientDirectory);
         var locale = Path.GetFileName(localeDirectory);

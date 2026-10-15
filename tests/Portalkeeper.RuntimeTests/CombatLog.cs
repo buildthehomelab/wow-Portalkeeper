@@ -107,7 +107,7 @@ internal static partial class Program
             File.ReadAllLines(toc).Contains("## Interface: 30300") && File.GetLastWriteTimeUtc(lua) == written);
         Queue(addonClient, clock, LogBytes(1, 10));
         check("the addon and pending logs aren't files the realm didn't ship",
-            ClientConformanceService.Check(addonClient, clientTorrent, []).Matches);
+            ClientConformanceService.Check(addonClient, clientTorrent, [], BinaryPins(addonClient)).Matches);
         check("the realm's addons are judged as before", new AddonService().InspectAddons(addonClient,
             new Portalkeeper.Models.AddonManifest { Addons = [new() { Id = "mine", Name = "Mine", Folder = "Mine", Required = true }] })
             .Single() is { IsInstalled: true, IsUpdateAvailable: false });
