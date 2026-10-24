@@ -764,7 +764,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
             // A shop that couldn't be asked at login (the world server restarting) is asked again
             // once the world is back, every few minutes; once the portal has answered, never.
             if (_realmHealthState is RealmHealthState.Online or RealmHealthState.WorldOnly)
+            {
                 _ = ProbeShopAsync(retry: true);
+                _ = ProbeLegacyAsync(retry: true);
+            }
         }
     }
 
@@ -980,6 +983,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CombatLogSharingOffered));
         OnPropertyChanged(nameof(CrashReportsOffered));
         OnPropertyChanged(nameof(ShopAvailable));
+        OnPropertyChanged(nameof(LegacyAvailable));
         OnPropertyChanged(nameof(PatchNotesAvailable));
         OnPropertyChanged(nameof(CanEnterRealm)); OnPropertyChanged(nameof(CanSwitchRealm));
         UpdateLaunchReadinessStatus();

@@ -332,6 +332,9 @@ internal static partial class Program
             // The coin shop.
             await ShopChecks(Check);
 
+            // Legacy: points from challenges, perk trees per character.
+            await LegacyChecks(Check);
+
             // Crash reports and the home screen's live info and patch notes.
             await HomeAndCrashChecks(root, Check);
         }

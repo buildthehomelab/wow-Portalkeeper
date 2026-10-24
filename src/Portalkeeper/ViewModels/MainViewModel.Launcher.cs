@@ -146,6 +146,7 @@ public sealed partial class MainViewModel
         ForgetCombatLogOffer();
         ForgetCrashReportOffer();
         ForgetShop();
+        ForgetLegacy();
         NotifyLoginChanged();
         await ConfigureSharingAsync();
         if (session is not null) await _accountService.LogoutAsync(session);
@@ -181,6 +182,7 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(CombatLogSharingOffered));
         OnPropertyChanged(nameof(CrashReportsOffered));
         OnPropertyChanged(nameof(ShopAvailable));
+        OnPropertyChanged(nameof(LegacyAvailable));
         NotifyInstallChanged();
         UpdateLaunchReadinessStatus();
     }
@@ -452,6 +454,7 @@ public sealed partial class MainViewModel
         _ = StartCombatLogSharingAsync();
         _ = RefreshCrashReportOfferAsync();
         _ = ProbeShopAsync();
+        _ = ProbeLegacyAsync();
         await ClearCacheIfRealmAsksAsync();
         // The client has to load the realm's patch names before any patch is moved to one: with a
         // Wow.exe that can't be set up, the patches it has are the only ones it loads.

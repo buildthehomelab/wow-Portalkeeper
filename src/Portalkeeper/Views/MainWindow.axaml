@@ -23,7 +23,7 @@
     WindowStartupLocation="CenterScreen">
 
     <!-- Evermore fork: one window with pages, like a game launcher. The top bar's links switch the
-         page under it (home, shop, armory, calendar, patch notes, addons, and the settings gear); the
+         page under it (home, shop, legacy, armory, calendar, patch notes, addons, and the settings gear); the
          status card and ENTER REALM stay at the bottom of every page. Required patches and addons
          look after themselves. -->
     <Window.Styles>
@@ -211,6 +211,9 @@
                     <Button Classes="link nav" Classes.selected="{Binding IsHomePage}" Content="HOME" Tag="Home" Click="Nav_Click" />
                     <TextBlock Text="|" Foreground="#55D8CCBA" VerticalAlignment="Center" IsVisible="{Binding ShopAvailable}" />
                     <Button Classes="link nav" Classes.selected="{Binding IsShopPage}" Content="SHOP" Tag="Shop" Click="Nav_Click" IsVisible="{Binding ShopAvailable}" />
+                    <TextBlock Text="|" Foreground="#55D8CCBA" VerticalAlignment="Center" IsVisible="{Binding LegacyAvailable}" />
+                    <Button Classes="link nav" Classes.selected="{Binding IsLegacyPage}" Content="LEGACY" Tag="Legacy" Click="Nav_Click" IsVisible="{Binding LegacyAvailable}"
+                            ToolTip.Tip="Spend the points your challenges earned on each character's perks" />
                     <TextBlock Text="|" Foreground="#55D8CCBA" VerticalAlignment="Center" IsVisible="{Binding ArmoryAvailable}" />
                     <Button Classes="link nav" Classes.selected="{Binding IsArmoryPage}" Content="ARMORY" Tag="Armory" Click="Nav_Click" IsVisible="{Binding ArmoryAvailable}" />
                     <TextBlock Text="|" Foreground="#55D8CCBA" VerticalAlignment="Center" IsVisible="{Binding CalendarAvailable}" />
@@ -343,6 +346,7 @@
             </Grid>
 
             <views:ShopPage IsVisible="{Binding IsShopPage}" Margin="24,8,24,0" />
+            <views:LegacyPage IsVisible="{Binding IsLegacyPage}" Margin="24,8,24,0" />
             <views:ArmoryPage IsVisible="{Binding IsArmoryPage}" Margin="24,8,24,0" />
             <views:CalendarPage IsVisible="{Binding IsCalendarPage}" Margin="24,8,24,0" />
             <views:PatchNotesPage IsVisible="{Binding IsPatchNotesPage}" Margin="24,8,24,0" />

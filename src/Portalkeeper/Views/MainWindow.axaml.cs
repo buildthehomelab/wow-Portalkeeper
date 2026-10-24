@@ -41,6 +41,33 @@ public partial class MainWindow : Window
 
     private void Close_Click(object? sender, RoutedEventArgs e) => Close();
 
+    private LegacyViewModel? _closeAsked;
+    private bool _closeConfirmed;
+
+    // Unsaved Legacy perks: closing the window asks first, on the LEGACY page (leaving the page
+    // already asks, so that's where a draft is). The app shutting down (a self-update) doesn't ask.
+    protected override void OnClosing(WindowClosingEventArgs e)
+    {
+        if (!_closeConfirmed && e.CloseReason is WindowCloseReason.WindowClosing or WindowCloseReason.Undefined
+            && DataContext is MainViewModel { IsLegacyPage: true } vm && vm.Legacy is { } legacy && !legacy.AskToClose())
+        {
+            e.Cancel = true;
+            if (!ReferenceEquals(_closeAsked, legacy))
+            {
+                if (_closeAsked is not null) _closeAsked.CloseConfirmed -= CloseAfterDiscard;
+                _closeAsked = legacy;
+                legacy.CloseConfirmed += CloseAfterDiscard;
+            }
+        }
+        base.OnClosing(e);
+    }
+
+    private void CloseAfterDiscard()
+    {
+        _closeConfirmed = true;
+        Close();
+    }
+
     // The top bar's links: the button's Tag names the page.
     private async void Nav_Click(object? sender, RoutedEventArgs e)
     {

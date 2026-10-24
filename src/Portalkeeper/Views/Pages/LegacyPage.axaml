@@ -1,0 +1,518 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Portalkeeper.ViewModels"
+             xmlns:views="using:Portalkeeper.Views"
+             x:Class="Portalkeeper.Views.LegacyPage"
+             x:DataType="vm:MainViewModel">
+
+    <!-- Evermore fork: the LEGACY page. Challenges done on the account earn Legacy points; the picked
+         character spends them in three perk trees, as a draft until SAVE. Its view model (Legacy)
+         lives while the player is logged in (MainViewModel.Legacy.cs). -->
+    <UserControl.Resources>
+        <StreamGeometry x:Key="CheckIcon">M 4,12.5 L 9.5,18 L 20,6.5 L 17.8,4.5 L 9.5,13.6 L 6.2,10.3 Z</StreamGeometry>
+
+        <!-- A perk's tooltip, like the game's talent tooltip -->
+        <DataTemplate x:Key="PerkTip" x:DataType="vm:LegacyPerkView">
+            <Border Width="310" Background="#F2080B10" BorderBrush="#9A6B1E" BorderThickness="1" CornerRadius="4" Padding="12,10">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="Bold" Foreground="#FFFFFF" TextWrapping="Wrap" />
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Text="{Binding RankLine}" FontSize="11.5" Foreground="#F0F0F0" />
+                        <TextBlock Grid.Column="1" Text="{Binding TreeName}" FontSize="11" Foreground="#9D9D9D" />
+                    </Grid>
+                    <TextBlock Text="{Binding RequirementText}" IsVisible="{Binding HasRequirement}" FontSize="11.5"
+                               Foreground="{Binding RequirementBrush}" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding Description}" FontSize="12" Foreground="#D8CCBA" TextWrapping="Wrap"
+                               IsVisible="{Binding Description, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                    <StackPanel Spacing="1" IsVisible="{Binding HasCurrentRank}" Margin="0,2,0,0">
+                        <TextBlock Text="Current rank:" FontSize="11" Foreground="#9D9D9D" />
+                        <TextBlock Text="{Binding CurrentRankText}" FontSize="12" Foreground="#FFD100" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel Spacing="1" IsVisible="{Binding HasNextRank}" Margin="0,2,0,0">
+                        <TextBlock Text="{Binding NextRankLabel}" FontSize="11" Foreground="#9D9D9D" />
+                        <TextBlock Text="{Binding NextRankText}" FontSize="12" Foreground="#FFD100" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding BlockerText}" IsVisible="{Binding HasBlocker}" FontSize="11.5" Foreground="#FF5555"
+                               TextWrapping="Wrap" Margin="0,2,0,0" />
+                    <TextBlock Text="{Binding HintText}" FontSize="10" Foreground="#8C8273" TextWrapping="Wrap" Margin="0,4,0,0" />
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <UserControl.Styles>
+        <Style Selector="Button.gold">
+            <Setter Property="Background">
+                <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+                    <GradientStop Offset="0" Color="#F6D17A" />
+                    <GradientStop Offset="0.55" Color="#D9A53E" />
+                    <GradientStop Offset="1" Color="#B07C22" />
+                </LinearGradientBrush>
+            </Setter>
+            <Setter Property="BorderBrush" Value="#FFE6A3" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Foreground" Value="#2A1A05" />
+        </Style>
+        <Style Selector="Button.gold:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background">
+                <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+                    <GradientStop Offset="0" Color="#FFE29A" />
+                    <GradientStop Offset="0.55" Color="#E8B650" />
+                    <GradientStop Offset="1" Color="#C08A2C" />
+                </LinearGradientBrush>
+            </Setter>
+            <Setter Property="BorderBrush" Value="#FFF2C8" />
+            <Setter Property="Foreground" Value="#2A1A05" />
+        </Style>
+        <Style Selector="Button.gold:disabled /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#2A2418" />
+            <Setter Property="BorderBrush" Value="#4E432C" />
+            <Setter Property="Foreground" Value="#75694E" />
+        </Style>
+
+        <!-- PERKS / CHALLENGES, like the shop's category tabs -->
+        <Style Selector="Button.tab">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0,0,0,2" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="CornerRadius" Value="0" />
+            <Setter Property="Padding" Value="12,8" />
+            <Setter Property="Foreground" Value="#AFA28D" />
+            <Setter Property="FontFamily" Value="avares://Portalkeeper/Assets/Fonts#Cinzel" />
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+        <Style Selector="Button.tab:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="#66E8B64C" />
+            <Setter Property="Foreground" Value="#FFE9A8" />
+        </Style>
+        <Style Selector="Button.tab.selected">
+            <Setter Property="BorderBrush" Value="#E8B64C" />
+            <Setter Property="Foreground" Value="#F6D477" />
+        </Style>
+        <Style Selector="Button.tab.selected:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="BorderBrush" Value="#E8B64C" />
+        </Style>
+        <!-- Behind the unsaved-changes question the tabs stay tabs, only dimmer. -->
+        <Style Selector="Button.tab:disabled /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="Foreground" Value="#75694E" />
+        </Style>
+        <Style Selector="Button.tab.selected:disabled /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="BorderBrush" Value="#9A6B1E" />
+        </Style>
+
+        <!-- Challenge categories down the left -->
+        <Style Selector="Button.category">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+            <Setter Property="BorderBrush" Value="#334D3B20" />
+            <Setter Property="CornerRadius" Value="0" />
+            <Setter Property="Padding" Value="12,8" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Foreground" Value="#D8CCBA" />
+        </Style>
+        <Style Selector="Button.category:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#22E8B64C" />
+            <Setter Property="Foreground" Value="#FFE9A8" />
+        </Style>
+        <Style Selector="Button.category.selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#3DE8B64C" />
+            <Setter Property="Foreground" Value="#F6D477" />
+        </Style>
+        <Style Selector="Button.category:disabled /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="#334D3B20" />
+            <Setter Property="Foreground" Value="#75694E" />
+        </Style>
+        <!-- A perk behind the question keeps its frame -->
+        <Style Selector="Button.perk:disabled /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
+        <Style Selector="Button.step:disabled /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#1A140E" />
+            <Setter Property="BorderBrush" Value="#765522" />
+        </Style>
+
+        <!-- A perk's icon button -->
+        <Style Selector="Button.perk">
+            <Setter Property="Width" Value="46" />
+            <Setter Property="Height" Value="46" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="CornerRadius" Value="4" />
+        </Style>
+        <Style Selector="Button.perk Border.glow">
+            <Setter Property="Opacity" Value="0" />
+        </Style>
+        <Style Selector="Button.perk:pointerover Border.glow">
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <Style Selector="Button.perk:focus-visible Border.glow">
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+
+        <!-- − and + beside each perk: faint until the perk is under the pointer -->
+        <Style Selector="Button.step">
+            <Setter Property="Width" Value="18" />
+            <Setter Property="Height" Value="18" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="CornerRadius" Value="9" />
+            <Setter Property="Background" Value="#1A140E" />
+            <Setter Property="BorderBrush" Value="#765522" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="#F6D477" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Opacity" Value="0.35" />
+        </Style>
+        <Style Selector="Grid.perkcell:pointerover Button.step">
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <Style Selector="Button.step:focus-visible">
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <Style Selector="Button.step:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#3A2A14" />
+            <Setter Property="BorderBrush" Value="#E8B64C" />
+            <Setter Property="Foreground" Value="#FFE9A8" />
+        </Style>
+        <Style Selector="Button.step:disabled">
+            <Setter Property="Opacity" Value="0.12" />
+        </Style>
+
+        <Style Selector="Border.card">
+            <Setter Property="Background" Value="#E61A140E" />
+            <Setter Property="BorderBrush" Value="#4D3B20" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="6" />
+        </Style>
+        <Style Selector="TextBlock.serif">
+            <Setter Property="FontFamily" Value="avares://Portalkeeper/Assets/Fonts#Cinzel" />
+        </Style>
+        <Style Selector="ComboBox">
+            <Setter Property="Background" Value="#1A140E" />
+            <Setter Property="Foreground" Value="#E9DFC9" />
+            <Setter Property="BorderBrush" Value="#765522" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="10,4" />
+        </Style>
+    </UserControl.Styles>
+
+    <ThemeVariantScope RequestedThemeVariant="Dark">
+    <Panel DataContext="{Binding Legacy}">
+    <Panel x:DataType="vm:LegacyViewModel">
+        <Grid RowDefinitions="Auto,Auto,*,Auto" IsEnabled="{Binding !IsConfirmingDiscard}">
+
+            <!-- Header: the picked character's points, and SAVE / UNDO / CLEAR ALL -->
+            <views:PageBanner Grid.Row="0" Title="LEGACY"
+                              Subtitle="Your account's challenges earn points for every character's perks.">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <Border IsVisible="{Binding HasCharacters}"
+                            Background="#B31A140E" BorderBrush="#66E8B64C" BorderThickness="1" CornerRadius="8" Padding="12,4"
+                            VerticalAlignment="Center" ToolTip.Tip="{Binding EarnedText}">
+                        <StackPanel VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Classes="serif" Text="POINTS" FontSize="11" Foreground="#AFA28D" VerticalAlignment="Center" />
+                                <Panel>
+                                    <TextBlock Text="{Binding PointsText}" FontSize="19" FontWeight="Bold" Foreground="#F6D477" IsVisible="{Binding !IsOverPoints}" />
+                                    <TextBlock Text="{Binding PointsText}" FontSize="19" FontWeight="Bold" Foreground="#FF6B5B" IsVisible="{Binding IsOverPoints}" />
+                                </Panel>
+                            </StackPanel>
+                            <TextBlock Text="{Binding PointsCaption}" FontSize="10" Foreground="#AFA28D" />
+                            <TextBlock Text="{Binding EarnedText}" FontSize="10" Foreground="#8C8273" />
+                        </StackPanel>
+                    </Border>
+                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" IsVisible="{Binding ShowPerkTools}">
+                        <Button Content="CLEAR ALL" Click="Clear_Click" IsEnabled="{Binding CanClear}" Padding="12,8"
+                                ToolTip.Tip="Take back every rank. Nothing changes on the realm until you save." />
+                        <Button Content="UNDO" Click="Undo_Click" IsEnabled="{Binding CanUndo}" Padding="12,8"
+                                ToolTip.Tip="Back to the perks the realm has for this character" />
+                        <Button Classes="gold" Content="SAVE" Click="Save_Click" IsEnabled="{Binding CanSave}" Padding="22,8" FontSize="14"
+                                ToolTip.Tip="Save these perks for the character (Ctrl+S)" />
+                    </StackPanel>
+                </StackPanel>
+            </views:PageBanner>
+
+            <!-- Tabs, what needs saying, and the character -->
+            <Grid Grid.Row="1" Margin="18,6,20,0" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16" IsVisible="{Binding ShowLegacy}">
+                <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Bottom">
+                    <Button Classes="tab plain" Classes.selected="{Binding ShowPerks}" Click="PerksTab_Click">
+                        <TextBlock Text="PERKS" />
+                    </Button>
+                    <Button Classes="tab plain" Classes.selected="{Binding ShowChallenges}" Click="ChallengesTab_Click">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Text="CHALLENGES" />
+                            <TextBlock Text="{Binding ChallengesTabText}" Foreground="#75694E" FontSize="11" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
+                    <TextBlock Text="{Binding HardcoreNote}" IsVisible="{Binding IsHardcore}" Foreground="#FF8A73" FontSize="12"
+                               TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{Binding BuildProblem}" IsVisible="{Binding HasBuildProblem}" Foreground="#FF5555" FontSize="12"
+                               TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{Binding UnsavedText}" IsVisible="{Binding HasUnsavedChanges}" Foreground="#F6D477" FontSize="12"
+                               FontStyle="Italic" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <TextBlock Text="Character" Foreground="#AFA28D" VerticalAlignment="Center" IsVisible="{Binding HasCharacters}" />
+                    <ComboBox x:Name="CharacterBox" ItemsSource="{Binding Characters}" MinWidth="270" IsVisible="{Binding HasCharacters}"
+                              IsEnabled="{Binding !IsSaving}" SelectionChanged="Character_SelectionChanged">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="vm:LegacyCharacterView">
+                                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Name}" Foreground="{Binding ClassBrush}" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding Detail}" Foreground="#AFA28D" FontSize="11" />
+                                    </StackPanel>
+                                    <Border Grid.Column="1" IsVisible="{Binding IsHardcore}" VerticalAlignment="Center"
+                                            Background="#33C42B1C" BorderBrush="#E0503C" BorderThickness="1" CornerRadius="3" Padding="5,1"
+                                            ToolTip.Tip="Hardcore character: only points earned on hardcore characters count">
+                                        <TextBlock Text="HARDCORE" FontSize="9" FontWeight="Bold" Foreground="#FF8A73" />
+                                    </Border>
+                                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding PointsText}" FontSize="11" Foreground="#C9A27A" VerticalAlignment="Center"
+                                                   ToolTip.Tip="Saved points: spent / available" />
+                                        <Ellipse Width="8" Height="8" Fill="#5CD65C" VerticalAlignment="Center"
+                                                 IsVisible="{Binding Online}" ToolTip.Tip="In the game now" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <Button Content="REFRESH" Click="Refresh_Click" IsEnabled="{Binding CanRefresh}" Padding="12,6" />
+                </StackPanel>
+            </Grid>
+
+            <Grid Grid.Row="2" Margin="0,8,0,0">
+                <!-- The three trees -->
+                <ScrollViewer IsVisible="{Binding ShowPerks}" HorizontalScrollBarVisibility="Disabled" Margin="18,0,18,0">
+                    <StackPanel IsVisible="{Binding ShowLegacy}" Spacing="10">
+                        <Border IsVisible="{Binding HasNoCharacters}" Classes="card" Padding="16,12">
+                            <TextBlock Text="This account has no characters yet. Make one in the game, then come back to pick its Legacy perks."
+                                       Foreground="#D8CCBA" TextWrapping="Wrap" />
+                        </Border>
+                        <ItemsControl ItemsSource="{Binding Trees}" IsEnabled="{Binding HasCharacters}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <UniformGrid Rows="1" ColumnSpacing="12" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:LegacyTreeView">
+                                    <views:DragonFrame Ground="Marble" Padding="14,10,14,12">
+                                        <StackPanel Spacing="8">
+                                            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                                                <Border Width="26" Height="26" CornerRadius="3" BorderBrush="#9A6B1E" BorderThickness="1" ClipToBounds="True"
+                                                        Background="#1F170F" VerticalAlignment="Center">
+                                                    <Image Source="{Binding IconImage}" Stretch="UniformToFill" />
+                                                </Border>
+                                                <TextBlock Grid.Column="1" Classes="dragon-title" Text="{Binding TitleUpper}" FontSize="15"
+                                                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Column="2" Text="{Binding SpentText}" FontSize="11.5" Foreground="#C9A27A"
+                                                           VerticalAlignment="Center" />
+                                            </Grid>
+                                            <Border Height="1" Background="#4D9A6B1E" />
+                                            <ItemsControl ItemsSource="{Binding Cells}">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <UniformGrid Columns="3" RowSpacing="8" ColumnSpacing="2" />
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="vm:LegacyCellView">
+                                                        <Panel Height="54">
+                                                            <ContentControl Content="{Binding Perk}" IsVisible="{Binding HasPerk}" HorizontalAlignment="Center">
+                                                                <ContentControl.ContentTemplate>
+                                                                    <DataTemplate x:DataType="vm:LegacyPerkView">
+                                                                        <Grid Classes="perkcell" ColumnDefinitions="18,Auto,18" ColumnSpacing="3" Background="Transparent">
+                                                                            <Button Grid.Column="0" Classes="step plain" Content="−" Click="Remove_Click"
+                                                                                    IsEnabled="{Binding CanRemove}" ToolTip.Tip="Take back a rank" />
+                                                                            <Panel Grid.Column="1" Width="52" Height="54">
+                                                                                <Button Classes="perk plain" Click="Perk_Click" HorizontalAlignment="Center" VerticalAlignment="Top"
+                                                                                        AutomationProperties.Name="{Binding AutomationName}">
+                                                                                    <ToolTip.Tip>
+                                                                                        <ContentControl Content="{Binding}" ContentTemplate="{StaticResource PerkTip}" />
+                                                                                    </ToolTip.Tip>
+                                                                                    <Panel>
+                                                                                        <Border CornerRadius="4" BorderThickness="2" BorderBrush="{Binding FrameBrush}"
+                                                                                                Background="#1F170F" ClipToBounds="True">
+                                                                                            <Panel>
+                                                                                                <TextBlock Text="{Binding Initial}" IsVisible="{Binding ShowInitial}" Classes="serif"
+                                                                                                           FontSize="20" FontWeight="Bold" Foreground="#C9A27A"
+                                                                                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                                                                <Image Source="{Binding IconImage}" Stretch="UniformToFill" />
+                                                                                                <!-- Locked: dimmed -->
+                                                                                                <Border Background="#B3080605" IsVisible="{Binding IsDimmed}" />
+                                                                                            </Panel>
+                                                                                        </Border>
+                                                                                        <Border Classes="glow" CornerRadius="4" BorderThickness="2" BorderBrush="#FFF4CC"
+                                                                                                Background="#18FFF4CC" IsHitTestVisible="False" />
+                                                                                    </Panel>
+                                                                                </Button>
+                                                                                <!-- The rank, at the corner like the game's talents -->
+                                                                                <Border HorizontalAlignment="Right" VerticalAlignment="Bottom" Background="#E6000000"
+                                                                                        BorderBrush="#5A5040" BorderThickness="1" CornerRadius="3" Padding="3,0" IsHitTestVisible="False">
+                                                                                    <TextBlock Text="{Binding RankText}" FontSize="11" FontWeight="Bold" Foreground="{Binding RankBrush}" />
+                                                                                </Border>
+                                                                                <!-- Changed since the last save -->
+                                                                                <Ellipse Width="7" Height="7" Fill="#F6D477" Stroke="#2A1A05" StrokeThickness="1"
+                                                                                         HorizontalAlignment="Left" VerticalAlignment="Top" Margin="1,1,0,0"
+                                                                                         IsVisible="{Binding IsChanged}" IsHitTestVisible="False" />
+                                                                            </Panel>
+                                                                            <Button Grid.Column="2" Classes="step plain" Content="+" Click="Add_Click"
+                                                                                    IsEnabled="{Binding CanAdd}" ToolTip.Tip="Add a rank" />
+                                                                        </Grid>
+                                                                    </DataTemplate>
+                                                                </ContentControl.ContentTemplate>
+                                                            </ContentControl>
+                                                        </Panel>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </views:DragonFrame>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Text="Left-click a perk to add a rank, right-click to take one back (or focus it and press + / −). Changes are only a draft until you SAVE."
+                                   Foreground="#8C8273" FontSize="11" TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center"
+                                   IsVisible="{Binding HasCharacters}" Margin="0,0,0,4" />
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- Challenges -->
+                <Grid IsVisible="{Binding ShowChallenges}" Margin="18,0,18,0" ColumnDefinitions="230,*" ColumnSpacing="12">
+                    <views:DragonFrame Ground="Marble" Padding="4,6">
+                        <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                            <ItemsControl ItemsSource="{Binding Categories}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:LegacyCategoryView">
+                                        <Button Classes="category plain" Classes.selected="{Binding IsSelected}" Click="Category_Click">
+                                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                                <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="5">
+                                                    <Path Data="{StaticResource CheckIcon}" Fill="#8EE68E" Width="10" Height="10" Stretch="Uniform"
+                                                          IsVisible="{Binding IsComplete}" VerticalAlignment="Center" />
+                                                    <TextBlock Text="{Binding CountText}" FontSize="12" Foreground="#C9A27A" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </views:DragonFrame>
+
+                    <views:DragonFrame Grid.Column="1" Ground="Marble" Padding="10,8">
+                        <Grid RowDefinitions="Auto,*">
+                            <Grid ColumnDefinitions="*,Auto" Margin="6,2,6,8">
+                                <TextBlock Classes="dragon-title" Text="{Binding SelectedCategory.Title}" FontSize="16" />
+                                <TextBlock Grid.Column="1" Text="{Binding SelectedCategory.CountText}" Foreground="#C9A27A" FontSize="13" VerticalAlignment="Center" />
+                            </Grid>
+                            <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled">
+                                <StackPanel>
+                                    <TextBlock IsVisible="{Binding HasNoChallenges}" Text="No challenges here yet." Foreground="#AFA28D" Margin="6,4" />
+                                    <ItemsControl ItemsSource="{Binding Challenges}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <UniformGrid Columns="2" ColumnSpacing="8" RowSpacing="6" />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:LegacyChallengeView">
+                                                <Border Classes="card" Padding="10,7">
+                                                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                                                        <Panel Width="20" Height="20" VerticalAlignment="Top" Margin="0,1,0,0">
+                                                            <Border IsVisible="{Binding Done}" CornerRadius="10" Background="#2A5CD65C" BorderBrush="#5CD65C" BorderThickness="1">
+                                                                <Path Data="{StaticResource CheckIcon}" Fill="#8EE68E" Width="11" Height="11" Stretch="Uniform" />
+                                                            </Border>
+                                                            <Border IsVisible="{Binding NotDone}" CornerRadius="10" BorderBrush="#5A5040" BorderThickness="1.5" />
+                                                        </Panel>
+                                                        <StackPanel Grid.Column="1" Spacing="1">
+                                                            <Panel>
+                                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13" Foreground="#F3D58C"
+                                                                           TextTrimming="CharacterEllipsis" IsVisible="{Binding Done}" />
+                                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13" Foreground="#CFC6B8"
+                                                                           TextTrimming="CharacterEllipsis" IsVisible="{Binding NotDone}" />
+                                                            </Panel>
+                                                            <TextBlock Text="{Binding Description}" FontSize="11.5" Foreground="#AFA28D" TextWrapping="Wrap" />
+                                                            <TextBlock Text="{Binding ByText}" IsVisible="{Binding HasBy}" FontSize="10.5" Foreground="#8EE68E" />
+                                                        </StackPanel>
+                                                        <Border Grid.Column="2" IsVisible="{Binding Hardcore}" VerticalAlignment="Top"
+                                                                Background="#33C42B1C" BorderBrush="#E0503C" BorderThickness="1" CornerRadius="3" Padding="5,1"
+                                                                ToolTip.Tip="{Binding HardcoreTip}">
+                                                            <TextBlock Text="HC" FontSize="10" FontWeight="Bold" Foreground="#FF8A73" />
+                                                        </Border>
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Grid>
+                    </views:DragonFrame>
+                </Grid>
+
+                <!-- First load -->
+                <StackPanel IsVisible="{Binding ShowFirstLoad}" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10" Width="260">
+                    <TextBlock Text="Opening your Legacy..." Foreground="#D8CCBA" HorizontalAlignment="Center" />
+                    <ProgressBar IsIndeterminate="True" Height="3" Foreground="#E8B64C" Background="#26FFFFFF" />
+                </StackPanel>
+
+                <!-- No listing -->
+                <Border IsVisible="{Binding HasLoadError}" Classes="card" HorizontalAlignment="Center" VerticalAlignment="Center"
+                        MaxWidth="520" Padding="24,20">
+                    <StackPanel Spacing="14">
+                        <TextBlock Text="Legacy isn't available" Classes="serif" FontSize="18" FontWeight="Bold" Foreground="#F3D58C"
+                                   HorizontalAlignment="Center" />
+                        <TextBlock Text="{Binding LoadError}" Foreground="#D8CCBA" TextWrapping="Wrap" TextAlignment="Center" />
+                        <Button Content="TRY AGAIN" Click="Refresh_Click" IsEnabled="{Binding CanRefresh}" HorizontalAlignment="Center" Padding="16,8" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <!-- Status line: what the last save did -->
+            <Border Grid.Row="3" Background="Transparent" BorderBrush="#33FFFFFF" BorderThickness="0,1,0,0" Padding="20,6"
+                    IsVisible="{Binding HasStatus}">
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                    <ProgressBar Width="60" Height="3" IsIndeterminate="True" Foreground="#E8B64C" Background="#26FFFFFF"
+                                 VerticalAlignment="Center" IsVisible="{Binding IsSaving}" />
+                    <Grid Grid.Column="1">
+                        <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" Foreground="#8EE68E" IsVisible="{Binding !StatusIsError}" />
+                        <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" Foreground="#E58A73" IsVisible="{Binding StatusIsError}" />
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Unsaved changes: switching character or leaving the page asks first -->
+        <Grid Background="#B3040709" IsVisible="{Binding IsConfirmingDiscard}">
+            <views:DragonFrame Width="460" HorizontalAlignment="Center" VerticalAlignment="Center" Ground="Marble" Padding="26,22">
+                <StackPanel Spacing="14">
+                    <TextBlock Classes="serif" Text="{Binding DiscardTitle}" FontSize="18" FontWeight="Bold" Foreground="#F3D58C"
+                               HorizontalAlignment="Center" />
+                    <TextBlock Text="{Binding DiscardText}" FontSize="14" Foreground="#F6EBD2" TextWrapping="Wrap" TextAlignment="Center" />
+                    <TextBlock Text="Nothing has been saved to the realm yet." FontSize="12" Foreground="#AFA28D" TextAlignment="Center" />
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="12" Margin="0,6,0,0">
+                        <Button x:Name="KeepEditingButton" Content="KEEP EDITING" Click="KeepEditing_Click" HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Center" Padding="12,9" />
+                        <Button Grid.Column="1" Classes="gold" Content="DISCARD" Click="Discard_Click"
+                                HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Padding="12,9" />
+                    </Grid>
+                </StackPanel>
+            </views:DragonFrame>
+        </Grid>
+    </Panel>
+    </Panel>
+    </ThemeVariantScope>
+</UserControl>

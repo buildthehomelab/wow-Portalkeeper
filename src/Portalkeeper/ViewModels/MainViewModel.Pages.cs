@@ -6,16 +6,18 @@ using Portalkeeper.Services;
 namespace Portalkeeper.ViewModels;
 
 /// <summary>The pages of the launcher's one window, picked from the top bar.</summary>
-public enum LauncherPage { Home, Shop, Armory, Calendar, PatchNotes, Addons, Settings }
+public enum LauncherPage { Home, Shop, Legacy, Armory, Calendar, PatchNotes, Addons, Settings }
 
 // Evermore fork: the launcher is one window with pages, like a game launcher. The top bar's links
-// switch the page under it (HOME, SHOP, ARMORY, CALENDAR, PATCH NOTES, ADDONS, and the settings gear);
+// switch the page under it (HOME, SHOP, LEGACY, ARMORY, CALENDAR, PATCH NOTES, ADDONS, and the settings gear);
 // the status card and ENTER REALM stay at the bottom of every page. A page's content comes from
 // the portal when the page is opened: the shop keeps its view model (and listing) while the player is
 // logged in, the armory and calendar ask again when their last answer is a minute old, and the patch
 // notes ask every visit. A page that stops applying (the shop after a logout, the armory on a realm
 // without one) sends the player home. The shop can't be left while a purchase is on its way: its
-// answer (or "it may have gone through") is only shown there.
+// answer (or "it may have gone through") is only shown there. LEGACY keeps its view model (and a
+// draft build) like the shop; leaving it with unsaved changes asks first, and it can't be left while
+// a save is on its way.
 public sealed partial class MainViewModel
 {
     private static readonly TimeSpan FeedKeptFor = TimeSpan.FromMinutes(1);
@@ -36,6 +38,7 @@ public sealed partial class MainViewModel
     public LauncherPage CurrentPage => _page;
     public bool IsHomePage => _page == LauncherPage.Home;
     public bool IsShopPage => _page == LauncherPage.Shop;
+    public bool IsLegacyPage => _page == LauncherPage.Legacy;
     public bool IsArmoryPage => _page == LauncherPage.Armory;
     public bool IsCalendarPage => _page == LauncherPage.Calendar;
     public bool IsPatchNotesPage => _page == LauncherPage.PatchNotes;
@@ -45,8 +48,8 @@ public sealed partial class MainViewModel
     /// <summary>The patch notes come from the built-in realm's portal.</summary>
     public bool PatchNotesAvailable => HomeInfoApplies;
 
-    /// <summary>The top bar's links work unless a purchase is on its way in the shop.</summary>
-    public bool CanNavigate => !IsShopBuying;
+    /// <summary>The top bar's links work unless a purchase is on its way in the shop, or a Legacy save.</summary>
+    public bool CanNavigate => !IsShopBuying && !IsLegacySaving;
 
     public ShopViewModel? Shop => _shop;
     public ArmoryViewModel? Armory => _armory;
@@ -63,11 +66,15 @@ public sealed partial class MainViewModel
     public async Task GoToAsync(LauncherPage page)
     {
         if (!CanNavigate && page != _page) return;
-        if (!PageApplies(page) || (page == LauncherPage.Shop && !EnsureShop())) page = LauncherPage.Home;
+        // Unsaved Legacy perks: the page asks first, and goes on with LeaveConfirmed.
+        if (_page == LauncherPage.Legacy && page != LauncherPage.Legacy && _legacy is { } legacy && !legacy.AskToLeave(page)) return;
+        if (!PageApplies(page) || (page == LauncherPage.Shop && !EnsureShop()) || (page == LauncherPage.Legacy && !EnsureLegacy()))
+            page = LauncherPage.Home;
         SetPage(page);
         switch (page)
         {
             case LauncherPage.Shop: await _shop!.LoadAsync(); break;
+            case LauncherPage.Legacy: await _legacy!.LoadAsync(keepStatus: _legacy.HasUnsavedChanges); break;
             case LauncherPage.Armory: await OpenArmoryAsync(); break;
             case LauncherPage.Calendar: await OpenCalendarAsync(); break;
             case LauncherPage.PatchNotes: await PatchNotes.LoadAsync(); break;
@@ -83,6 +90,7 @@ public sealed partial class MainViewModel
     private bool PageApplies(LauncherPage page) => page switch
     {
         LauncherPage.Shop => ShopAvailable,
+        LauncherPage.Legacy => LegacyAvailable,
         LauncherPage.Armory => ArmoryAvailable,
         LauncherPage.Calendar => CalendarAvailable,
         LauncherPage.PatchNotes => PatchNotesAvailable,
@@ -108,6 +116,7 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(CurrentPage));
         OnPropertyChanged(nameof(IsHomePage));
         OnPropertyChanged(nameof(IsShopPage));
+        OnPropertyChanged(nameof(IsLegacyPage));
         OnPropertyChanged(nameof(IsArmoryPage));
         OnPropertyChanged(nameof(IsCalendarPage));
         OnPropertyChanged(nameof(IsPatchNotesPage));
