@@ -112,7 +112,6 @@ public static class ClientConformanceService
             File.Delete(full);
             deleted++;
         }
-        if (deleted > 0) PatchService.ClearClientCache(root);
         return deleted;
     }
 

@@ -4,7 +4,7 @@ using Portalkeeper.Services;
 
 namespace Portalkeeper.RuntimeTests;
 
-// Patch changes clear the client's WDB cache so stale data is not reused.
+// Patch changes keep the client's WDB cache: it holds only server data, and an empty one makes the next login slow.
 internal static partial class Program
 {
     private static async Task<int> RunPatchCache()
@@ -22,16 +22,15 @@ internal static partial class Program
             var cacheFile = Path.Combine(root, "Cache/WDB/enUS/itemcache.wdb");
             WriteSimple(cacheFile, "stale");
             await patches.InstallAsync(root, patch);
-            Check("patch install clears client cache",
-                File.Exists(Path.Combine(root, "Data/patch-Z.MPQ")) && !Directory.Exists(Path.Combine(root, "Cache")));
-            WriteSimple(cacheFile, "current");
+            Check("patch install keeps client cache",
+                File.Exists(Path.Combine(root, "Data/patch-Z.MPQ")) && File.Exists(cacheFile));
             await patches.InstallAsync(root, patch);
             Check("already-valid patch keeps client cache", File.Exists(cacheFile));
             patches.Remove(root, patch);
-            Check("patch removal clears client cache",
-                !File.Exists(Path.Combine(root, "Data/patch-Z.MPQ")) && !Directory.Exists(Path.Combine(root, "Cache")));
-            patches.Remove(root, patch);
-            Check("removing an absent patch is a no-op", !Directory.Exists(Path.Combine(root, "Cache")));
+            Check("patch removal keeps client cache",
+                !File.Exists(Path.Combine(root, "Data/patch-Z.MPQ")) && File.Exists(cacheFile));
+            PatchService.ClearClientCache(root);
+            Check("ClearClientCache empties it", !Directory.Exists(Path.Combine(root, "Cache")));
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
         Console.WriteLine(failures == 0 ? "ALL CHECKS PASSED" : failures + " CHECK(S) FAILED");
