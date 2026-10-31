@@ -222,8 +222,8 @@ public sealed partial class MainViewModel
     /// <summary>
     /// Downloads the realm's client into its target folder. Files already there are kept when they pass
     /// the torrent's checksums, so only what differs is downloaded; files the realm doesn't ship (and
-    /// client files longer than the realm's) are deleted first. Addons, settings, Logs and Screenshots
-    /// are never touched; Cache is cleared when files change. True when the client ended up complete.
+    /// client files longer than the realm's) are deleted first. Addons, settings, Cache, Logs and
+    /// Screenshots are never touched. True when the client ended up complete.
     /// </summary>
     private async Task<bool> DownloadClientAsync(LauncherSession session, string? folder, bool repair)
     {
@@ -920,8 +920,8 @@ public sealed partial class MainViewModel
     private static readonly System.Net.Http.HttpClient CacheVersionHttp = new() { Timeout = TimeSpan.FromSeconds(5) };
 
     /// <summary>
-    /// Patch changes clear Cache themselves (PatchService). This covers server-side changes the client
-    /// also caches (items, spells, quests): when the realm's cache-version.txt changes, Cache is cleared
+    /// Patch changes leave Cache alone (it holds only server data, see PatchService.ClearClientCache). For
+    /// server-side changes the client caches (items, spells, quests): when the realm's cache-version.txt changes, Cache is cleared
     /// once for this client. Runs after realm refreshes and right before launching.
     /// </summary>
     private async Task ClearCacheIfRealmAsksAsync()

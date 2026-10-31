@@ -15,7 +15,7 @@
 >
 > - Players can share their combat logs with the realm (Settings → Account and sharing, off by default, shown when the realm collects them). While it's on, combat logging turns itself on in dungeons and raids, and the log is uploaded after the game closes and then deleted. A log from before the option was turned on is renamed, not sent. The realm uses the logs to tune its bots.
 >
-> - Patch changes clear the client's `Cache` folder. For server changes the client also caches (items, spells, quests), change the text in the realm folder's `cache-version.txt` (for example `date +%s > realm-public/cache-version.txt`) and every launcher clears Cache once before its next launch.
+> - Patch changes leave the client's `Cache` folder alone (it holds only server data). For server changes the client caches (items, spells, quests), change the text in the realm folder's `cache-version.txt` (for example `date +%s > realm-public/cache-version.txt`) and every launcher clears Cache once before its next launch.
 >
 > The launcher's title font is [Cinzel](https://github.com/NDISCOVER/Cinzel) by Natanael Gama, under the SIL Open Font License 1.1 (`src/Portalkeeper/Assets/Fonts/Cinzel-OFL.txt`).
 >

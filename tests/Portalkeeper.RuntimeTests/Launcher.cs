@@ -712,8 +712,7 @@ internal static partial class Program
         check("extras and too-long files are deleted", deleted == extras.Length + 1
             && extras.All(e => !File.Exists(e)) && !File.Exists(common));
         check("a shorter file stays for the download to finish", File.Exists(patchC));
-        check("the player's files and realm patches stay", players.Where(p => !p.Contains("Cache")).All(File.Exists) && File.Exists(realmPatch));
-        check("Cache is cleared after files change", !Directory.Exists(Path.Combine(client, "Cache")));
+        check("the player's files, Cache and realm patches stay", players.All(File.Exists) && File.Exists(realmPatch));
 
         Put(Path.Combine(client, "Data", "patch-Y.MPQ"), Bytes(10, 10));
         result = ClientConformanceService.Check(client, torrent, realmFiles);

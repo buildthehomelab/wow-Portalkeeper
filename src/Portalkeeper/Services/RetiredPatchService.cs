@@ -166,7 +166,6 @@ public static class RetiredPatchService
                 finally { if (File.Exists(temp)) File.Delete(temp); }
             }
         }
-        if (adopted > 0) PatchService.ClearClientCache(root);
         return adopted;
     }
 
@@ -251,7 +250,6 @@ public static class RetiredPatchService
             if (inLedger) { ledger.Remove(entry); ledgerChanged = true; }
         }
         if (ledgerChanged) Save(root, ledger);
-        if (removed > 0) PatchService.ClearClientCache(root);
         return new(removed, restored, pending);
     }
 
@@ -274,7 +272,6 @@ public static class RetiredPatchService
             File.Delete(full);
             removed++;
         }
-        if (removed > 0) PatchService.ClearClientCache(root);
         return removed;
     }
 

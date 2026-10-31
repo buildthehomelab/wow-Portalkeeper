@@ -107,7 +107,6 @@ public sealed class PatchService
             if (allocations is null)
                 RetiredPatchService.RecordInstall(root, realm is null ? "" : RealmIdentity.FromRealm(realm), destination,
                     patch.Sha256, replaced, RealmBranding.IsBuiltIn(realm) ? RealmBranding.RetiredPatches : []);
-            ClearClientCache(root);
         }
         finally { if (File.Exists(temp)) File.Delete(temp); }
     }
@@ -121,11 +120,12 @@ public sealed class PatchService
         ManagedRuntimeWriteGuard.Check(root, destination);
         if (!(backupUnlessCurrent && patch.Sha256.Length > 0 && Matches(destination, patch.Sha256))) Backup(root, destination);
         File.Delete(destination);
-        ClearClientCache(root);
         // Explicit removal retains the allocation so repair reuses the same slot.
     }
-    // The client caches server data in Cache/WDB and keeps it across patch
-    // changes, so a new patch can show stale data until the cache is rebuilt.
+    // Cache/WDB holds only what the server sent (items, creatures, objects, quests,
+    // texts), never anything from an MPQ, so patch changes leave it alone: only
+    // cache-version.txt and REPAIR GAME clear it. An empty cache makes the first
+    // login after it slow, because the client asks the server for everything again.
     // It is regenerated on the next login; clearing is best effort because the
     // patch change itself has already succeeded.
     public static void ClearClientCache(string root)
